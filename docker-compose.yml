@@ -1,0 +1,117 @@
+services:
+
+  postgres:
+    image: postgres:15
+
+    container_name: airflow-postgres
+
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+
+    ports:
+      - "5432:5432"
+
+    env_file:
+      - .env
+    
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+  
+    restart: unless-stopped
+
+  airflow-webserver:
+    image: apache/airflow:2.9.1
+
+    container_name: airflow-webserver
+
+    depends_on:
+      - postgres
+
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__WEBSERVER__SECRET_KEY: mysecretkey
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./configs:/opt/airflow/configs
+      - ./datasets:/opt/airflow/datasets
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    ports:
+      - "8080:8080"
+
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow users create
+      --username admin
+      --password admin
+      --firstname admin
+      --lastname admin
+      --role Admin
+      --email admin@example.com || true &&
+      airflow webserver
+      "
+    env_file:
+      - .env
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.1
+
+    container_name: airflow-scheduler
+
+    depends_on:
+      - airflow-webserver
+
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__WEBSERVER__SECRET_KEY: mysecretkey
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./configs:/opt/airflow/configs
+      - ./datasets:/opt/airflow/datasets
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    command: airflow scheduler
+    
+    env_file:
+      - .env
+    
+    restart: unless-stopped
+
+  spark:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+
+    container_name: spark-delta-engine
+
+    volumes:
+      - ./spark:/app/spark
+      - ./datasets:/app/datasets
+      - ./configs:/app/configs
+      - ./logs:/app/logs
+      - ./tests:/app/tests
+
+    working_dir: /app
+
+    stdin_open: true
+    tty: true
+
+    command: tail -f /dev/null
+
+    env_file:
+      - .env
+    
+    restart: unless-stopped
+
+  

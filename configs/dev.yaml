@@ -1,0 +1,27 @@
+app:
+    name: digital-payments-platform
+    environment: dev
+
+paths:
+    raw: "/app/datasets/raw"
+    bronze: "/app/datasets/bronze"
+    silver: "/app/datasets/silver"
+    gold: "/app/datasets/gold"
+    quarantine: "/app/datasets/quarantine"
+
+tables:
+    transactions:
+        name: transactions
+        primary_key: transaction_id
+
+spark:
+    app_name: digital-payment-etl
+    shuffle_partitions: 4
+
+logging:
+    log_level: INFO
+    log_path: "/app/logs"
+
+audit:
+    enabled: true
+
