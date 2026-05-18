@@ -9,8 +9,7 @@ def validate_positive_amount(df):
         invalid_df: amount <= 0
     """
 
-    invalid_df = df.filter(col("amount") <= 0) \
-        .withColumn("validation_reason", lit("INVALID_AMOUNT"))
+    invalid_df = df.filter(col("amount") <= 0)
 
     return invalid_df
 
@@ -29,7 +28,7 @@ def validate_null_transaction_id(df):
         col("step").isNull() |
         col("nameOrig").isNull() |
         col("nameDest").isNull()
-    ).withColumn("validation_reason", lit("NULL_KEY_FIELDS"))
+    )
 
     return invalid_df
 
@@ -62,7 +61,6 @@ def validate_transaction_type(df):
 
     valid_types = ["PAYMENT", "TRANSFER", "CASH_OUT", "DEBIT", "CASH_IN"]
 
-    invalid_df = df.filter(~col("type").isin(valid_types)) \
-        .withColumn("validation_reason", lit("INVALID_TRANSACTION_TYPE"))
+    invalid_df = df.filter(~col("type").isin(valid_types))
 
     return invalid_df

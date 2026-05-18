@@ -7,7 +7,6 @@ from pyspark.sql.types import (
     IntegerType,
     DoubleType
 )
-
 from spark.utils.validators import validate_transaction_type
 
 
@@ -66,13 +65,10 @@ def test_validate_transaction_type(spark_session):
         StructField("oldbalanceDest", DoubleType(), True),
         StructField("newbalanceDest", DoubleType(), True),
         StructField("isFraud", IntegerType(), True),
-        StructField("isFlaggedFraud", IntegerType(), True),
-        StructField("validation_reason", StringType(), True)
+        StructField("isFlaggedFraud", IntegerType(), True)
     ])
 
     input_df = spark_session.createDataFrame(input_data, schema)
-
-    actual_df = validate_transaction_type(input_df)
 
     expected_data = [
         (
@@ -86,15 +82,16 @@ def test_validate_transaction_type(spark_session):
             0.0,
             5000.0,
             0,
-            0,
-            "INVALID_TRANSACTION_TYPE"
+            0
         )
     ]
 
     expected_df = spark_session.createDataFrame(expected_data, schema)
 
+    result_df = validate_transaction_type(input_df)
+
     assert_df_equality(
-        actual_df,
+        result_df,
         expected_df,
         ignore_row_order=True
     )
