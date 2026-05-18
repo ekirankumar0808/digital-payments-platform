@@ -43,8 +43,8 @@ try:
         spark.read
         .format("csv")
         .option("header", "true")
-        .option("schema", transaction_schema)
-        .load(os.path.join(raw_path, "transactions.csv"))
+        .schema(transaction_schema)
+        .load(os.path.join(raw_path, "paysim_sample.csv"))
     )
 
     input_count = df.count()
@@ -70,6 +70,7 @@ try:
     )
 
     logger.info("Writing Bronze Delta Table")
+
 
     # Delta write with schema evolution
     (

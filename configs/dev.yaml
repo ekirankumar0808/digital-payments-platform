@@ -3,11 +3,12 @@ app:
     environment: dev
 
 paths:
-    raw: "/app/datasets/raw"
-    bronze: "/app/datasets/bronze"
-    silver: "/app/datasets/silver"
-    gold: "/app/datasets/gold"
-    quarantine: "/app/datasets/quarantine"
+    raw: "s3a://digital-payments-kiran/raw/paysim/transactions/"
+    bronze: "s3a://digital-payments-kiran/bronze/paysim/transactions/"
+    silver: "s3a://digital-payments-kiran/silver/paysim/transactions/"
+    gold: "s3a://digital-payments-kiran/gold/paysim/fraud_daily_summary/"
+    quarantine: "s3a://digital-payments-kiran/quarantine/paysim/transactions/"
+    dataquality: "s3a://digital-payments-kiran/dataquality/paysim/transactions/"
 
 tables:
     transactions:

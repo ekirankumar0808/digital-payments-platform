@@ -36,6 +36,13 @@ services:
       AIRFLOW__WEBSERVER__SECRET_KEY: mysecretkey
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
+      AIRFLOW__SMTP__SMTP_STARTTLS: "True"
+      AIRFLOW__SMTP__SMTP_SSL: "False"
+      AIRFLOW__SMTP__SMTP_USER: ekirankumar0808@gmail.com
+      AIRFLOW__SMTP__SMTP_PASSWORD: ghjclkdkrmxljxly
+      AIRFLOW__SMTP__SMTP_PORT: "587"
+      AIRFLOW__SMTP__SMTP_MAIL_FROM: ekirankumar0808@gmail.com
 
     volumes:
       - ./airflow/dags:/opt/airflow/dags
@@ -74,6 +81,13 @@ services:
       AIRFLOW__WEBSERVER__SECRET_KEY: mysecretkey
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
+      AIRFLOW__SMTP__SMTP_STARTTLS: "True"
+      AIRFLOW__SMTP__SMTP_SSL: "False"
+      AIRFLOW__SMTP__SMTP_USER: ekirankumar0808@gmail.com
+      AIRFLOW__SMTP__SMTP_PASSWORD: ghjclkdkrmxljxly
+      AIRFLOW__SMTP__SMTP_PORT: "587"
+      AIRFLOW__SMTP__SMTP_MAIL_FROM: ekirankumar0808@gmail.com
 
     volumes:
       - ./airflow/dags:/opt/airflow/dags
@@ -111,6 +125,11 @@ services:
 
     env_file:
       - .env
+    
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_REGION}
     
     restart: unless-stopped
 

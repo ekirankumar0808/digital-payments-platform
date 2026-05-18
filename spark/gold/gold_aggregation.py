@@ -1,95 +1,108 @@
-from datetime import datetime
 import os
+from datetime import datetime
+from pyspark.sql.functions import *
 from spark.utils.logger import get_logger
 from spark.utils.config_loader import load_config
 from spark.utils.spark_session import create_spark_session
-from pyspark.sql.functions import (
-    col,
-    count,
-    sum,
-    when,
-    current_timestamp
-)
 
 try:
     env = os.getenv("ENV", "dev")
     config = load_config(env)
 
-
     logger = get_logger(
-    logger_name = "GoldAggregation",
-    log_path =config['logging']['log_path'],
-    log_level=config['logging']['log_level']
-)
+        logger_name="GoldAggregation",
+        log_path=config['logging']['log_path'],
+        log_level=config['logging']['log_level']
+    )
+
+    spark = create_spark_session("GoldAggregation")
 
     silver_path = config['paths']['silver']
     gold_path = config['paths']['gold']
+
     start_time = datetime.now()
-    # Configure Spark Session
-    spark = create_spark_session("GoldAggregation")
 
-    logger.info("Starting Gold Aggregation Process")
+    logger.info("Starting Gold Layer Aggregation for PaySim")
 
-    # Read Silver Delta Table
-    silver_df = (
-        spark.read
-        .format("delta")
-        .load(silver_path)
+    # ------------------------------------------------------
+    # READ SILVER
+    # ------------------------------------------------------
+    silver_df = spark.read.format("delta").load(silver_path)
+
+    logger.info(f"Silver row count: {silver_df.count()}")
+
+    # ------------------------------------------------------
+    # GOLD AGGREGATION (FRAUD ANALYTICS)
+    # ------------------------------------------------------
+    gold_df = silver_df.groupBy("ingestion_date").agg(
+
+        # total transactions
+        count("*").alias("total_transactions"),
+
+        # fraud KPIs
+        sum("isFraud").alias("total_frauds"),
+        sum("isFlaggedFraud").alias("total_flagged_frauds"),
+
+        # fraud rate
+        (sum("isFraud") / count("*")).alias("fraud_rate"),
+
+        # financial exposure
+        sum("amount").alias("total_transaction_value"),
+        sum(when(col("isFraud") == 1, col("amount")).otherwise(0)).alias("fraud_amount"),
+
+        # risk behavior
+        sum("is_high_value").alias("high_value_txns"),
+        sum("is_full_depletion").alias("full_depletion_events"),
+
+        # transaction type behavior
+        sum(when(col("type") == "CASH_OUT", 1).otherwise(0)).alias("cash_out_count"),
+        sum(when(col("type") == "TRANSFER", 1).otherwise(0)).alias("transfer_count"),
+
+        # risk score insights
+        avg("risk_score").alias("avg_risk_score"),
+        max("risk_score").alias("max_risk_score")
     )
 
-    logger.info(f"Silver Layer Row Count: {silver_df.count()}")
-
-
-    # Gold Aggregations
-    gold_df = (
-        silver_df
-        .groupBy("transaction_date")
-        .agg(
-            count("*").alias("total_transactions"),
-
-            sum("amount").alias("total_revenue"),
-
-            sum(
-                when(
-                    col("status") == "SUCCESS",
-                    1
-                ).otherwise(0)
-            ).alias("successful_transactions"),
-
-            sum(
-                when(
-                    col("status") == "FAILED",
-                    1
-                ).otherwise(0)
-            ).alias("failed_transactions")
-        )
-    )
-
-    # Add processing timestamp
+    # ------------------------------------------------------
+    # ADD METADATA
+    # ------------------------------------------------------
     gold_df = gold_df.withColumn(
         "gold_processed_timestamp",
         current_timestamp()
     )
 
-    logger.info(f"Gold Layer Row Count: {gold_df.count()}")
-
-    # Write Gold Delta Table
-    (
-        gold_df.write
-        .format("delta")
-        .mode("overwrite")
-        .partitionBy("transaction_date")
-        .option("overwriteSchema", "true")
-        .save(gold_path)
+    gold_df = gold_df.withColumn(
+        "fraud_ratio_percent",
+        col("fraud_rate") * 100
     )
+
+    gold_df = gold_df.withColumn(
+        "year_month",
+        date_format(col("ingestion_date"), "yyyy_MM")
+    )
+
+    logger.info(f"Gold row count: {gold_df.count()}")
+
+
+    # ------------------------------------------------------
+    # WRITE GOLD LAYER
+    # ------------------------------------------------------
+    gold_df.write \
+        .format("delta") \
+        .mode("overwrite") \
+        .partitionBy("year_month") \
+        .option("overwriteSchema", "true") \
+        .save(gold_path)
 
     end_time = datetime.now()
 
-    logger.info("Execution Time for Gold Aggregation: {:.2f} seconds".format((end_time - start_time).total_seconds()))
+    logger.info(
+        f"Gold aggregation completed in {(end_time - start_time).total_seconds()} seconds"
+    )
 
     spark.stop()
 
 except Exception as e:
-    logger.error(f"Error during Gold Aggregation: {str(e)}")
+    logger.error(f"Error in Gold Layer: {str(e)}")
     spark.stop()
     raise e

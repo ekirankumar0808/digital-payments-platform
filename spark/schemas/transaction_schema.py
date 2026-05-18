@@ -1,46 +1,32 @@
 from pyspark.sql.types import (
     StructType,
     StructField,
+    IntegerType,
     StringType,
     DoubleType
 )
 
-
 transaction_schema = StructType([
 
-    StructField(
-        "transaction_id",
-        StringType(),
-        True
-    ),
+    StructField("step", IntegerType(), True),
 
-    StructField(
-        "merchant",
-        StringType(),
-        True
-    ),
+    StructField("type", StringType(), True),
 
-    StructField(
-        "amount",
-        DoubleType(),
-        True
-    ),
+    StructField("amount", DoubleType(), True),
 
-    StructField(
-        "status",
-        StringType(),
-        True
-    ),
+    StructField("nameOrig", StringType(), True),
 
-    StructField(
-        "transaction_date",
-        StringType(),
-        True
-    ),
+    StructField("oldbalanceOrg", DoubleType(), True),
 
-    StructField(
-        "currency",
-        StringType(),
-        True
-    )
+    StructField("newbalanceOrig", DoubleType(), True),
+
+    StructField("nameDest", StringType(), True),
+
+    StructField("oldbalanceDest", DoubleType(), True),
+
+    StructField("newbalanceDest", DoubleType(), True),
+
+    StructField("isFraud", IntegerType(), True),
+
+    StructField("isFlaggedFraud", IntegerType(), True)
 ])
