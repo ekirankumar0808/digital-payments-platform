@@ -25,7 +25,8 @@ def test_validate_transaction_type(spark_session):
             0.0,
             0.0,
             0,
-            0
+            0,
+            "INVALID_TRANSACTION_TYPE"
         ),
         (
             1,
@@ -38,7 +39,8 @@ def test_validate_transaction_type(spark_session):
             0.0,
             0.0,
             1,
-            0
+            0,
+            "INVALID_TRANSACTION_TYPE"
         ),
         (
             1,
@@ -51,7 +53,8 @@ def test_validate_transaction_type(spark_session):
             0.0,
             5000.0,
             0,
-            0
+            0,
+            "INVALID_TRANSACTION_TYPE"
         )  # invalid transaction type
     ]
 
@@ -66,7 +69,8 @@ def test_validate_transaction_type(spark_session):
         StructField("oldbalanceDest", DoubleType(), True),
         StructField("newbalanceDest", DoubleType(), True),
         StructField("isFraud", IntegerType(), True),
-        StructField("isFlaggedFraud", IntegerType(), True)
+        StructField("isFlaggedFraud", IntegerType(), True),
+        StructField("transaction_type", StringType(), True)
     ])
 
     input_df = spark_session.createDataFrame(input_data, schema)
@@ -85,7 +89,8 @@ def test_validate_transaction_type(spark_session):
             0.0,
             5000.0,
             0,
-            0
+            0,
+            "INVALID_TRANSACTION_TYPE"
         )
     ]
 
