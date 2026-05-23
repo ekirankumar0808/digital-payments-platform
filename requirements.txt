@@ -6,3 +6,6 @@ botocore==1.38.27
 awswrangler==3.12.1
 pyarrow==20.0.0
 numpy==2.2.6
+pytest==8.4.1
+chispa==0.11.1
+pyspark==3.5.2
