@@ -3,12 +3,18 @@ FROM apache/spark:3.5.2
 USER root
 
 # ------------------------------------------------
-# System packages
+# OS DEPENDENCIES (IMPORTANT FIX)
 # ------------------------------------------------
 RUN apt-get update && apt-get install -y \
     curl \
     unzip \
+    python3 \
+    python3-pip \
+    procps \
     && rm -rf /var/lib/apt/lists/*
+
+# Ensure python points correctly
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # ------------------------------------------------
 # AWS CLI
@@ -19,20 +25,18 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.
     rm -rf awscliv2.zip aws
 
 # ------------------------------------------------
-# Python dependencies (ONLY ONCE)
+# PYTHON DEPENDENCIES (NO PYSPARK INSTALL HERE)
+# IMPORTANT: Spark image already includes pyspark + py4j
 # ------------------------------------------------
-RUN pip install --no-cache-dir \
-    pyspark==3.5.2 \
+RUN pip3 install --no-cache-dir \
     delta-spark==3.1.0 \
     pyyaml \
     pytest \
     chispa \
     boto3
 
-# ❌ REMOVE py4j install (comes with pyspark)
-
 # ------------------------------------------------
-# Hadoop AWS jars
+# HADOOP AWS JARS (S3 SUPPORT)
 # ------------------------------------------------
 RUN curl -L -o /opt/spark/jars/hadoop-aws-3.3.4.jar \
     https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar
@@ -41,7 +45,7 @@ RUN curl -L -o /opt/spark/jars/aws-java-sdk-bundle-1.12.262.jar \
     https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
 
 # ------------------------------------------------
-# Delta jars (optional but OK for safety)
+# DELTA LAKE JARS
 # ------------------------------------------------
 RUN curl -L -o /opt/spark/jars/delta-spark_2.12-3.1.0.jar \
     https://repo1.maven.org/maven2/io/delta/delta-spark_2.12/3.1.0/delta-spark_2.12-3.1.0.jar
@@ -50,16 +54,14 @@ RUN curl -L -o /opt/spark/jars/delta-storage-3.1.0.jar \
     https://repo1.maven.org/maven2/io/delta/delta-storage/3.1.0/delta-storage-3.1.0.jar
 
 # ------------------------------------------------
-# App setup
+# ENVIRONMENT
 # ------------------------------------------------
 WORKDIR /app
+
 COPY . /app
 
 ENV PYTHONPATH="/app"
 
-# ------------------------------------------------
-# IMPORTANT SPARK DEFAULT CONFIG (DELTA FIX)
-# ------------------------------------------------
-ENV SPARK_SUBMIT_OPTIONS="\
---conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
---conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
+# Spark + Python safety
+ENV PYSPARK_PYTHON=python3
+ENV PYSPARK_DRIVER_PYTHON=python3

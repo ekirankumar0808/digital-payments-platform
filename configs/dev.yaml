@@ -3,12 +3,20 @@ app:
     environment: dev
 
 paths:
+    bronze_metadata: "s3a://digital-payments-kiran/metadata/bronze_file_tracker/"
+    silver_metadata: "s3a://digital-payments-kiran/metadata/silver_file_tracker/"
+    gold_metadata: "s3a://digital-payments-kiran/metadata/gold_file_tracker/"
+
     raw: "s3a://digital-payments-kiran/raw/paysim/transactions/"
     bronze: "s3a://digital-payments-kiran/bronze/paysim/transactions/"
     silver: "s3a://digital-payments-kiran/silver/paysim/transactions/"
     gold: "s3a://digital-payments-kiran/gold/paysim/fraud_daily_summary/"
+
     quarantine: "s3a://digital-payments-kiran/quarantine/paysim/transactions/"
     dataquality: "s3a://digital-payments-kiran/dataquality/paysim/transactions/"
+
+    audit_pipeline_runs: "s3a://digital-payments-kiran/audit/pipeline_runs/"
+    validation_metrics: "s3a://digital-payments-kiran/audit/validation_metrics/"
 
 tables:
     transactions:

@@ -1,0 +1,6 @@
+streamlit
+pandas
+pyarrow
+boto3
+awswrangler
+plotly

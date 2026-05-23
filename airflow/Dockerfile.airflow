@@ -1,0 +1,7 @@
+FROM apache/airflow:2.9.3
+
+USER root
+
+RUN pip install pyspark==3.5.1 delta-spark==3.1.0 py4j
+
+USER airflow
