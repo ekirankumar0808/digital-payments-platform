@@ -4,12 +4,16 @@ from pyspark.sql.functions import col, lit
 # 1. VALIDATE POSITIVE AMOUNT
 # ------------------------------------------------------
 def validate_positive_amount(df):
-    """
-    Returns:
-        invalid_df: amount <= 0
-    """
 
-    invalid_df = df.filter(col("amount") <= 0)
+    invalid_df = (
+        df.filter(
+            col("amount") <= 0
+        )
+        .withColumn(
+            "validation_reason",
+            lit("INVALID_AMOUNT")
+        )
+    )
 
     return invalid_df
 
@@ -59,8 +63,22 @@ def validate_transaction_type(df):
     Only valid PaySim types allowed
     """
 
-    valid_types = ["PAYMENT", "TRANSFER", "CASH_OUT", "DEBIT", "CASH_IN"]
+    valid_types = [
+        "PAYMENT",
+        "TRANSFER",
+        "CASH_OUT",
+        "DEBIT",
+        "CASH_IN"
+    ]
 
-    invalid_df = df.filter(~col("type").isin(valid_types))
+    invalid_df = (
+        df.filter(
+            ~col("type").isin(valid_types)
+        )
+        .withColumn(
+            "validation_reason",
+            lit("INVALID_TRANSACTION_TYPE")
+        )
+    )
 
     return invalid_df

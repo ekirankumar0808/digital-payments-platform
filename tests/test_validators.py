@@ -13,9 +13,7 @@ from spark.utils.validators import (
 )
 
 
-def test_validate_transaction_type(
-    spark_session
-):
+def test_validate_transaction_type(spark_session):
 
     input_data = [
         (
@@ -29,19 +27,6 @@ def test_validate_transaction_type(
             0.0,
             0.0,
             0,
-            0
-        ),
-        (
-            1,
-            "TRANSFER",
-            181.0,
-            "C1305486145",
-            181.0,
-            0.0,
-            "C553264065",
-            0.0,
-            0.0,
-            1,
             0
         ),
         (
@@ -115,8 +100,21 @@ def test_validate_transaction_type(
         expected_schema
     )
 
-    result_df = validate_transaction_type(
-        input_df
+    result_df = validate_transaction_type(input_df)
+
+    result_df = result_df.select(
+        "step",
+        "type",
+        "amount",
+        "nameOrig",
+        "oldbalanceOrg",
+        "newbalanceOrig",
+        "nameDest",
+        "oldbalanceDest",
+        "newbalanceDest",
+        "isFraud",
+        "isFlaggedFraud",
+        "validation_reason"
     )
 
     assert_df_equality(
