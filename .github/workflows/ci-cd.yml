@@ -19,35 +19,58 @@ jobs:
 
     steps:
 
+      # -----------------------------------
+      # 1. Checkout code
+      # -----------------------------------
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # -----------------------------------
+      # 2. Configure AWS credentials
+      # -----------------------------------
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
+      # -----------------------------------
+      # 3. Login to Amazon ECR
+      # -----------------------------------
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      # -----------------------------------
+      # 4. Build Docker image
+      # -----------------------------------
       - name: Build Docker Image
         run: |
           docker build -t $ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
 
-      - name: Tag Image
+      # -----------------------------------
+      # 5. Tag Docker image
+      # -----------------------------------
+      - name: Tag Docker Image
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           ECR_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+
           docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_URI:$IMAGE_TAG
+
           echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
 
+      # -----------------------------------
+      # 6. Push image to ECR
+      # -----------------------------------
       - name: Push Image to ECR
         run: |
           docker push $ECR_URI:$IMAGE_TAG
 
-      - name: Deploy to EC2
+      # -----------------------------------
+      # 7. Deploy Spark Batch Job on EC2
+      # -----------------------------------
+      - name: Deploy Spark Job to EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -63,34 +86,17 @@ jobs:
             IMAGE_TAG=${{ github.sha }}
 
             IMAGE="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$IMAGE_TAG"
-            CONTAINER_NAME="digital-payment-app"
-            PORT=8080
 
+            echo "Logging into ECR..."
             aws ecr get-login-password --region $REGION \
             | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
 
+            echo "Pulling latest image..."
             docker pull $IMAGE
 
-            docker stop $CONTAINER_NAME || true
-            docker rm $CONTAINER_NAME || true
-
-            docker run -d \
-              --name $CONTAINER_NAME \
-              -p $PORT:$PORT \
-              --restart unless-stopped \
+            echo "Running Spark batch job..."
+            docker run --rm \
+              --name digital-payment-job \
               $IMAGE
 
-            sleep 20
-
-            for i in {1..5}; do
-              if curl -f http://localhost:$PORT/health; then
-                echo "Deployment successful"
-                exit 0
-              fi
-              sleep 5
-            done
-
-            echo "Deployment failed"
-            docker stop $CONTAINER_NAME || true
-            docker rm $CONTAINER_NAME || true
-            exit 1
+            echo "Job completed successfully"
