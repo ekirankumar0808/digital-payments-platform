@@ -1,120 +1,51 @@
-name: Digital Payment Pipeline CI/CD
+- name: Deploy to EC2
+  uses: appleboy/ssh-action@v1.0.3
+  with:
+    host: ${{ secrets.EC2_HOST }}
+    username: ubuntu
+    key: ${{ secrets.EC2_SSH_KEY }}
+    script: |
 
-on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+      set -e
 
-env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-  IMAGE_TAG: ${{ github.sha }}
+      ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
+      REGION=${{ secrets.AWS_REGION }}
+      REPO=${{ secrets.ECR_REPOSITORY }}
+      IMAGE_TAG=${{ github.sha }}
 
-jobs:
-  build-and-deploy:
+      IMAGE="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$IMAGE_TAG"
+      CONTAINER_NAME="digital-payment-app"
+      PORT=8080
 
-    runs-on: ubuntu-latest
+      echo "Logging into ECR..."
+      aws ecr get-login-password --region $REGION \
+      | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
 
-    steps:
+      echo "Pulling image..."
+      docker pull $IMAGE
 
-      # -----------------------------------
-      # 1. Checkout code
-      # -----------------------------------
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      echo "Stopping old container..."
+      docker stop $CONTAINER_NAME || true
+      docker rm $CONTAINER_NAME || true
 
-      # -----------------------------------
-      # 2. Configure AWS credentials
-      # -----------------------------------
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+      echo "Starting new container..."
+      docker run -d \
+        --name $CONTAINER_NAME \
+        -p $PORT:$PORT \
+        --restart unless-stopped \
+        $IMAGE
 
-      # -----------------------------------
-      # 3. Login to Amazon ECR (FIXED)
-      # -----------------------------------
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      echo "Waiting for startup..."
+      sleep 20
 
-      # -----------------------------------
-      # 4. Build Docker image
-      # -----------------------------------
-      - name: Build Docker Image
-        run: |
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
+      echo "Running health check..."
+      if curl -f http://localhost:$PORT/health; then
+        echo "✅ Deployment successful"
+      else
+        echo "❌ Health check failed - rolling back"
 
-      # -----------------------------------
-      # 5. Tag Docker image
-      # -----------------------------------
-      - name: Tag Docker Image
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+        docker stop $CONTAINER_NAME || true
+        docker rm $CONTAINER_NAME || true
 
-          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_URI:$IMAGE_TAG
-
-          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
-
-      # -----------------------------------
-      # 6. Push image to ECR
-      # -----------------------------------
-      - name: Push Docker Image to ECR
-        run: |
-          docker push $ECR_URI:$IMAGE_TAG
-
-      # -----------------------------------
-      # 7. Deploy to EC2 (NEW - CD stage)
-      # -----------------------------------
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-
-            set -e
-
-            ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
-            REGION=${{ env.AWS_REGION }}
-            IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}"
-            CONTAINER_NAME="digital-payment-app"
-            PORT=8080
-
-            echo "Logging into ECR..."
-            aws ecr get-login-password --region $REGION \
-            | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
-
-            echo "Pulling image..."
-            docker pull $IMAGE
-
-            echo "Stopping old container..."
-            docker stop $CONTAINER_NAME || true
-            docker rm $CONTAINER_NAME || true
-
-            echo "Starting new container..."
-            docker run -d \
-              --name $CONTAINER_NAME \
-              -p $PORT:$PORT \
-              --restart unless-stopped \
-              $IMAGE
-
-            echo "Waiting for startup..."
-            sleep 15
-
-            echo "Running health check..."
-            if curl -f http://localhost:$PORT/health; then
-              echo "✅ Deployment successful"
-            else
-              echo "❌ Health check failed - rolling back"
-
-              docker stop $CONTAINER_NAME || true
-              docker rm $CONTAINER_NAME || true
-
-              exit 1
-            fi
+        exit 1
+      fi
