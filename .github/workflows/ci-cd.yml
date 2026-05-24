@@ -1,51 +1,96 @@
-- name: Deploy to EC2
-  uses: appleboy/ssh-action@v1.0.3
-  with:
-    host: ${{ secrets.EC2_HOST }}
-    username: ubuntu
-    key: ${{ secrets.EC2_SSH_KEY }}
-    script: |
+name: Digital Payment Pipeline CI/CD
 
-      set -e
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
-      ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
-      REGION=${{ secrets.AWS_REGION }}
-      REPO=${{ secrets.ECR_REPOSITORY }}
-      IMAGE_TAG=${{ github.sha }}
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  IMAGE_TAG: ${{ github.sha }}
 
-      IMAGE="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$IMAGE_TAG"
-      CONTAINER_NAME="digital-payment-app"
-      PORT=8080
+jobs:
+  build-and-deploy:
 
-      echo "Logging into ECR..."
-      aws ecr get-login-password --region $REGION \
-      | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+    runs-on: ubuntu-latest
 
-      echo "Pulling image..."
-      docker pull $IMAGE
+    steps:
 
-      echo "Stopping old container..."
-      docker stop $CONTAINER_NAME || true
-      docker rm $CONTAINER_NAME || true
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      echo "Starting new container..."
-      docker run -d \
-        --name $CONTAINER_NAME \
-        -p $PORT:$PORT \
-        --restart unless-stopped \
-        $IMAGE
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      echo "Waiting for startup..."
-      sleep 20
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
-      echo "Running health check..."
-      if curl -f http://localhost:$PORT/health; then
-        echo "✅ Deployment successful"
-      else
-        echo "❌ Health check failed - rolling back"
+      - name: Build Docker Image
+        run: |
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
 
-        docker stop $CONTAINER_NAME || true
-        docker rm $CONTAINER_NAME || true
+      - name: Tag Image
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_URI:$IMAGE_TAG
+          echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
 
-        exit 1
-      fi
+      - name: Push Image to ECR
+        run: |
+          docker push $ECR_URI:$IMAGE_TAG
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+
+            set -e
+
+            ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
+            REGION=${{ secrets.AWS_REGION }}
+            REPO=${{ secrets.ECR_REPOSITORY }}
+            IMAGE_TAG=${{ github.sha }}
+
+            IMAGE="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$IMAGE_TAG"
+            CONTAINER_NAME="digital-payment-app"
+            PORT=8080
+
+            aws ecr get-login-password --region $REGION \
+            | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+
+            docker pull $IMAGE
+
+            docker stop $CONTAINER_NAME || true
+            docker rm $CONTAINER_NAME || true
+
+            docker run -d \
+              --name $CONTAINER_NAME \
+              -p $PORT:$PORT \
+              --restart unless-stopped \
+              $IMAGE
+
+            sleep 20
+
+            for i in {1..5}; do
+              if curl -f http://localhost:$PORT/health; then
+                echo "Deployment successful"
+                exit 0
+              fi
+              sleep 5
+            done
+
+            echo "Deployment failed"
+            docker stop $CONTAINER_NAME || true
+            docker rm $CONTAINER_NAME || true
+            exit 1
