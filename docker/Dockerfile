@@ -58,6 +58,7 @@ RUN curl -L -o /opt/spark/jars/aws-java-sdk-bundle-1.12.262.jar \
 # ✅ DELTA CONFIG (FIXED - ENABLED)
 # ------------------------------------------------
 ENV PYSPARK_SUBMIT_ARGS="\
+--packages io.delta:delta-spark_2.12:3.1.0 \
 --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
 --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog \
 pyspark-shell"
