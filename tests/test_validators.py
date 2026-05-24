@@ -1,46 +1,23 @@
 from chispa.dataframe_comparer import assert_df_equality
-
 from pyspark.sql.types import (
-    StructType,
-    StructField,
-    StringType,
-    IntegerType,
-    DoubleType
+    StructType, StructField, StringType, IntegerType, DoubleType
 )
 
-from spark.utils.validators import (
-    validate_transaction_type
-)
+from spark.utils.validators import validate_transaction_type
 
 
 def test_validate_transaction_type(spark_session):
 
     input_data = [
         (
-            1,
-            "PAYMENT",
-            9839.64,
-            "C1231006815",
-            170136.0,
-            160296.36,
-            "M1979787155",
-            0.0,
-            0.0,
-            0,
-            0
+            1, "PAYMENT", 9839.64, "C1231006815",
+            170136.0, 160296.36, "M1979787155",
+            0.0, 0.0, 0, 0
         ),
         (
-            1,
-            "HACK",
-            5000.0,
-            "C999999999",
-            10000.0,
-            5000.0,
-            "C888888888",
-            0.0,
-            5000.0,
-            0,
-            0
+            1, "HACK", 5000.0, "C999999999",
+            10000.0, 5000.0, "C888888888",
+            0.0, 5000.0, 0, 0
         )
     ]
 
@@ -58,64 +35,34 @@ def test_validate_transaction_type(spark_session):
         StructField("isFlaggedFraud", IntegerType(), True)
     ])
 
-    input_df = spark_session.createDataFrame(
-        input_data,
-        schema
-    )
+    input_df = spark_session.createDataFrame(input_data, schema)
 
+    result_df = validate_transaction_type(input_df)
+
+    # -----------------------------
+    # ASSERT 1: Only invalid rows should remain
+    # -----------------------------
+    assert result_df.count() == 1
+
+    # -----------------------------
+    # ASSERT 2: Validate exact output
+    # -----------------------------
     expected_schema = StructType([
-        StructField("step", IntegerType(), True),
-        StructField("type", StringType(), True),
-        StructField("amount", DoubleType(), True),
-        StructField("nameOrig", StringType(), True),
-        StructField("oldbalanceOrg", DoubleType(), True),
-        StructField("newbalanceOrig", DoubleType(), True),
-        StructField("nameDest", StringType(), True),
-        StructField("oldbalanceDest", DoubleType(), True),
-        StructField("newbalanceDest", DoubleType(), True),
-        StructField("isFraud", IntegerType(), True),
-        StructField("isFlaggedFraud", IntegerType(), True),
+        *schema.fields,
         StructField("validation_reason", StringType(), True)
     ])
 
     expected_data = [
         (
-            1,
-            "HACK",
-            5000.0,
-            "C999999999",
-            10000.0,
-            5000.0,
-            "C888888888",
-            0.0,
-            5000.0,
-            0,
-            0,
+            1, "HACK", 5000.0, "C999999999",
+            10000.0, 5000.0, "C888888888",
+            0.0, 5000.0, 0, 0,
             "INVALID_TRANSACTION_TYPE"
         )
     ]
 
-    expected_df = spark_session.createDataFrame(
-        expected_data,
-        expected_schema
-    )
+    expected_df = spark_session.createDataFrame(expected_data, expected_schema)
 
-    result_df = validate_transaction_type(input_df)
-
-    result_df = result_df.select(
-        "step",
-        "type",
-        "amount",
-        "nameOrig",
-        "oldbalanceOrg",
-        "newbalanceOrig",
-        "nameDest",
-        "oldbalanceDest",
-        "newbalanceDest",
-        "isFraud",
-        "isFlaggedFraud",
-        "validation_reason"
-    )
 
     assert_df_equality(
         result_df,
