@@ -26,9 +26,10 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.
     rm -rf awscliv2.zip aws
 
 # ------------------------------------------------
-# Python dependencies
+# Python dependencies (IMPORTANT FIX HERE)
 # ------------------------------------------------
 RUN pip install --no-cache-dir \
+    pyspark==3.5.2 \
     delta-spark==3.1.0 \
     pyyaml \
     pytest \
@@ -54,10 +55,12 @@ RUN curl -L -o /opt/spark/jars/aws-java-sdk-bundle-1.12.262.jar \
     https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
 
 # ------------------------------------------------
-# DELTA CONFIG (DISABLED FOR NOW - FIX LATER)
+# ✅ DELTA CONFIG (FIXED - ENABLED)
 # ------------------------------------------------
-# ENV PYSPARK_SUBMIT_ARGS="--conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
-# --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog pyspark-shell"
+ENV PYSPARK_SUBMIT_ARGS="\
+--conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
+--conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog \
+pyspark-shell"
 
 # ------------------------------------------------
 # Default command (CI mode)
