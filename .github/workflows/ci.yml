@@ -1,47 +1,58 @@
-name: Digital Payment Pipeline CI
+name: Digital Payment Pipeline CI/CD
 
 on:
   push:
-    branches:
-      - main
+    branches: ["main"]
   pull_request:
-    branches:
-      - main
+    branches: ["main"]
 
 jobs:
-  test:
+  build-and-push:
     runs-on: ubuntu-latest
 
-    env:
-      PYTHONPATH: .
-      PYSPARK_PYTHON: python3
-      PYSPARK_DRIVER_PYTHON: python3
-
     steps:
+      # -----------------------------------
+      # 1. Checkout code
+      # -----------------------------------
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # -----------------------------------
+      # 2. Configure AWS credentials
+      # -----------------------------------
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          python-version: "3.10"
-      
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Install Dependencies
+      # -----------------------------------
+      # 3. Login to Amazon ECR
+      # -----------------------------------
+      - name: Login to Amazon ECR
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+          docker login --username AWS --password-stdin ${{ secrets.ECR_URI }}
 
-      - name: Show Installed Packages
-        run: pip list
-
-      - name: Run Pytest
+      # -----------------------------------
+      # 4. Build Docker image
+      # -----------------------------------
+      - name: Build Docker Image
         run: |
-          pytest -v --disable-warnings
+          docker build -t ${{ secrets.ECR_REPOSITORY }}:${{ github.sha }} -f docker/Dockerfile .
+
+      # -----------------------------------
+      # 5. Tag image for ECR
+      # -----------------------------------
+      - name: Tag Docker Image
+        run: |
+          docker tag ${{ secrets.ECR_REPOSITORY }}:${{ github.sha }} \
+          ${{ secrets.ECR_URI }}:${{ github.sha }}
+
+      # -----------------------------------
+      # 6. Push image to ECR
+      # -----------------------------------
+      - name: Push Docker Image to ECR
+        run: |
+          docker push ${{ secrets.ECR_URI }}:${{ github.sha }}

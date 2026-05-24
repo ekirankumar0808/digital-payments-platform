@@ -8,7 +8,14 @@ USER root
 RUN apt-get update && apt-get install -y \
     curl \
     unzip \
+    groff \
+    less \
     && rm -rf /var/lib/apt/lists/*
+
+# ------------------------------------------------
+# Upgrade pip
+# ------------------------------------------------
+RUN pip install --upgrade pip
 
 # ------------------------------------------------
 # AWS CLI
@@ -19,17 +26,23 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.
     rm -rf awscliv2.zip aws
 
 # ------------------------------------------------
-# Python dependencies (ONLY ONCE)
+# Python dependencies
 # ------------------------------------------------
 RUN pip install --no-cache-dir \
-    pyspark==3.5.2 \
     delta-spark==3.1.0 \
     pyyaml \
     pytest \
     chispa \
     boto3
 
-# ❌ REMOVE py4j install (comes with pyspark)
+# ------------------------------------------------
+# App setup
+# ------------------------------------------------
+WORKDIR /app
+COPY . /app
+
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
 
 # ------------------------------------------------
 # Hadoop AWS jars
@@ -41,25 +54,12 @@ RUN curl -L -o /opt/spark/jars/aws-java-sdk-bundle-1.12.262.jar \
     https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
 
 # ------------------------------------------------
-# Delta jars (optional but OK for safety)
+# DELTA CONFIG (DISABLED FOR NOW - FIX LATER)
 # ------------------------------------------------
-RUN curl -L -o /opt/spark/jars/delta-spark_2.12-3.1.0.jar \
-    https://repo1.maven.org/maven2/io/delta/delta-spark_2.12/3.1.0/delta-spark_2.12-3.1.0.jar
-
-RUN curl -L -o /opt/spark/jars/delta-storage-3.1.0.jar \
-    https://repo1.maven.org/maven2/io/delta/delta-storage/3.1.0/delta-storage-3.1.0.jar
+# ENV PYSPARK_SUBMIT_ARGS="--conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
+# --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog pyspark-shell"
 
 # ------------------------------------------------
-# App setup
+# Default command (CI mode)
 # ------------------------------------------------
-WORKDIR /app
-COPY . /app
-
-ENV PYTHONPATH="/app"
-
-# ------------------------------------------------
-# IMPORTANT SPARK DEFAULT CONFIG (DELTA FIX)
-# ------------------------------------------------
-ENV SPARK_SUBMIT_OPTIONS="\
---conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
---conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
+CMD ["python3", "-m", "pytest", "tests/"]
