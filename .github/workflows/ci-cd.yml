@@ -68,14 +68,16 @@ jobs:
           docker push $ECR_URI:$IMAGE_TAG
 
       # -----------------------------------
-      # 7. Deploy Spark Batch Job on EC2
+      # 7. Deploy Spark Container & Trigger Airflow DAG
       # -----------------------------------
-      - name: Deploy Spark Job to EC2
+      - name: Deploy to EC2 and Trigger Pipeline
         uses: appleboy/ssh-action@v1.0.3
+
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
+
           script: |
 
             set -e
@@ -87,16 +89,75 @@ jobs:
 
             IMAGE="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$IMAGE_TAG"
 
-            echo "Logging into ECR..."
-            aws ecr get-login-password --region $REGION \
-            | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+            echo "==========================================="
+            echo "Navigating to project directory..."
+            echo "==========================================="
 
-            echo "Pulling latest image..."
+            cd ~/spark-cluster/digital-payments-platform
+
+            echo "==========================================="
+            echo "Pulling latest GitHub code..."
+            echo "==========================================="
+
+            git pull origin main
+
+            echo "==========================================="
+            echo "Logging into Amazon ECR..."
+            echo "==========================================="
+
+            aws ecr get-login-password --region $REGION \
+            | docker login --username AWS --password-stdin \
+            $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+
+            echo "==========================================="
+            echo "Pulling latest Spark image..."
+            echo "==========================================="
+
             docker pull $IMAGE
 
-            echo "Running Spark batch job..."
-            docker run --rm \
-              --name digital-payment-job \
-              $IMAGE
+            echo "==========================================="
+            echo "Stopping old Spark container..."
+            echo "==========================================="
 
-            echo "Job completed successfully"
+            docker stop spark-delta-engine || true
+            docker rm spark-delta-engine || true
+
+            echo "==========================================="
+            echo "Starting updated Spark container..."
+            echo "==========================================="
+
+            docker run -d \
+              --name spark-delta-engine \
+              --network host \
+              --env-file .env \
+              -v $(pwd)/spark:/app/spark \
+              -v $(pwd)/datasets:/app/datasets \
+              -v $(pwd)/configs:/app/configs \
+              -v $(pwd)/logs:/app/logs \
+              -v $(pwd)/tests:/app/tests \
+              -w /app \
+              $IMAGE \
+              tail -f /dev/null
+
+            echo "==========================================="
+            echo "Waiting for Spark container..."
+            echo "==========================================="
+
+            sleep 20
+
+            echo "==========================================="
+            echo "Checking running containers..."
+            echo "==========================================="
+
+            docker ps
+
+            echo "==========================================="
+            echo "Triggering Airflow DAG..."
+            echo "==========================================="
+
+            docker exec airflow-webserver \
+            airflow dags trigger digital_payments_pipeline
+
+            echo "==========================================="
+            echo "Deployment completed successfully"
+            echo "==========================================="
