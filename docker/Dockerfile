@@ -18,6 +18,13 @@ RUN apt-get update && apt-get install -y \
 RUN pip install --upgrade pip
 
 # ------------------------------------------------
+# Install Python dependencies
+# ------------------------------------------------
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ------------------------------------------------
 # AWS CLI
 # ------------------------------------------------
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip && \
@@ -26,20 +33,10 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.
     rm -rf awscliv2.zip aws
 
 # ------------------------------------------------
-# Python dependencies (IMPORTANT FIX HERE)
-# ------------------------------------------------
-RUN pip install --no-cache-dir \
-    pyspark==3.5.2 \
-    delta-spark==3.1.0 \
-    pyyaml \
-    pytest \
-    chispa \
-    boto3
-
-# ------------------------------------------------
 # App setup
 # ------------------------------------------------
 WORKDIR /app
+
 COPY . /app
 
 ENV PYTHONPATH="/app"
@@ -55,13 +52,18 @@ RUN curl -L -o /opt/spark/jars/aws-java-sdk-bundle-1.12.262.jar \
     https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
 
 # ------------------------------------------------
-# ✅ DELTA CONFIG (FIXED - ENABLED)
+# Delta Lake Config
 # ------------------------------------------------
 ENV PYSPARK_SUBMIT_ARGS="\
 --packages io.delta:delta-spark_2.12:3.1.0 \
 --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
 --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog \
 pyspark-shell"
+
+# ------------------------------------------------
+# Streamlit Port
+# ------------------------------------------------
+EXPOSE 8501
 
 # ------------------------------------------------
 # Default command (CI mode)

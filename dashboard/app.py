@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+from streamlit_autorefresh import st_autorefresh
+
 from utils.athena_client import run_query
 
 
@@ -15,6 +17,15 @@ st.set_page_config(
     layout="wide"
 )
 
+# ---------------------------------------------------
+# AUTO REFRESH DASHBOARD
+# ---------------------------------------------------
+
+st_autorefresh(
+    interval=60000,   # Refresh every 60 seconds
+    key="dashboard_refresh"
+)
+
 st.title("💳 Digital Payments Fraud Analytics Dashboard")
 
 st.markdown(
@@ -22,7 +33,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------
-# LOAD DATA
+# QUERY
 # ---------------------------------------------------
 
 query = """
@@ -50,7 +61,15 @@ ORDER BY ingestion_date DESC
 LIMIT 100
 """
 
-df = run_query(query)
+# ---------------------------------------------------
+# LOAD DATA WITH CACHING
+# ---------------------------------------------------
+
+@st.cache_data(ttl=60)
+def load_data():
+    return run_query(query)
+
+df = load_data()
 
 # ---------------------------------------------------
 # DATE CONVERSION

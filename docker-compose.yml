@@ -1,4 +1,5 @@
 services:
+
   spark:
     build:
       context: .
@@ -12,6 +13,7 @@ services:
       - ./configs:/app/configs
       - ./logs:/app/logs
       - ./tests:/app/tests
+      - ./dashboard:/app/dashboard
 
     working_dir: /app
 
@@ -22,12 +24,44 @@ services:
 
     env_file:
       - .env
-    
+
     environment:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_DEFAULT_REGION: ${AWS_REGION}
-    
+
     restart: unless-stopped
 
-  
+
+  streamlit-dashboard:
+
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+
+    container_name: streamlit-dashboard
+
+    command: >
+      streamlit run dashboard/app.py
+      --server.port 8501
+      --server.address 0.0.0.0
+
+    ports:
+      - "8501:8501"
+
+    volumes:
+      - ./dashboard:/app/dashboard
+      - ./configs:/app/configs
+      - ./logs:/app/logs
+
+    working_dir: /app
+
+    env_file:
+      - .env
+
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_REGION}
+
+    restart: unless-stopped
