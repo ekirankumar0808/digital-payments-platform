@@ -52,8 +52,8 @@ jobs:
         run: |
 
           docker build \
-          -t $ECR_REPOSITORY:$IMAGE_TAG \
-          -f docker/Dockerfile .
+            -t $ECR_REPOSITORY:$IMAGE_TAG \
+            -f docker/Dockerfile .
 
       # -----------------------------------
       # 5. Tag Docker Image
@@ -67,8 +67,8 @@ jobs:
           ECR_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
 
           docker tag \
-          $ECR_REPOSITORY:$IMAGE_TAG \
-          $ECR_URI:$IMAGE_TAG
+            $ECR_REPOSITORY:$IMAGE_TAG \
+            $ECR_URI:$IMAGE_TAG
 
           echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
 
@@ -122,9 +122,9 @@ jobs:
 
             aws ecr get-login-password --region $REGION \
             | docker login \
-            --username AWS \
-            --password-stdin \
-            $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+              --username AWS \
+              --password-stdin \
+              $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
 
             echo "==========================================="
             echo "Pulling latest Docker image..."
@@ -154,6 +154,8 @@ jobs:
               --name spark-delta-engine \
               --network host \
               --env-file .env \
+              -e AWS_REGION=$REGION \
+              -e AWS_DEFAULT_REGION=$REGION \
               -v $(pwd)/spark:/app/spark \
               -v $(pwd)/datasets:/app/datasets \
               -v $(pwd)/configs:/app/configs \
@@ -172,6 +174,8 @@ jobs:
               --name streamlit-dashboard \
               --network host \
               --env-file .env \
+              -e AWS_REGION=$REGION \
+              -e AWS_DEFAULT_REGION=$REGION \
               -v $(pwd)/dashboard:/app/dashboard \
               -v $(pwd)/configs:/app/configs \
               -v $(pwd)/logs:/app/logs \
@@ -198,7 +202,7 @@ jobs:
             echo "==========================================="
 
             docker exec airflow-webserver \
-            airflow dags trigger digital_payments_pipeline
+              airflow dags trigger digital_payments_pipeline
 
             echo "==========================================="
             echo "Cleaning unused Docker resources..."
