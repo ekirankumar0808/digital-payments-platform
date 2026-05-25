@@ -3,6 +3,7 @@ name: Digital Payment Pipeline CI/CD
 on:
   push:
     branches: ["main"]
+
   pull_request:
     branches: ["main"]
 
@@ -13,6 +14,7 @@ env:
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
+
   build-and-deploy:
 
     runs-on: ubuntu-latest
@@ -20,16 +22,17 @@ jobs:
     steps:
 
       # -----------------------------------
-      # 1. Checkout code
+      # 1. Checkout Repository
       # -----------------------------------
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       # -----------------------------------
-      # 2. Configure AWS credentials
+      # 2. Configure AWS Credentials
       # -----------------------------------
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
+
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -42,35 +45,47 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       # -----------------------------------
-      # 4. Build Docker image
+      # 4. Build Docker Image
       # -----------------------------------
       - name: Build Docker Image
+
         run: |
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG -f docker/Dockerfile .
+
+          docker build \
+          -t $ECR_REPOSITORY:$IMAGE_TAG \
+          -f docker/Dockerfile .
 
       # -----------------------------------
-      # 5. Tag Docker image
+      # 5. Tag Docker Image
       # -----------------------------------
       - name: Tag Docker Image
+
         run: |
+
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
           ECR_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
 
-          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_URI:$IMAGE_TAG
+          docker tag \
+          $ECR_REPOSITORY:$IMAGE_TAG \
+          $ECR_URI:$IMAGE_TAG
 
           echo "ECR_URI=$ECR_URI" >> $GITHUB_ENV
 
       # -----------------------------------
-      # 6. Push image to ECR
+      # 6. Push Image to ECR
       # -----------------------------------
       - name: Push Image to ECR
+
         run: |
+
           docker push $ECR_URI:$IMAGE_TAG
 
       # -----------------------------------
-      # 7. Deploy Spark Container & Trigger Airflow DAG
+      # 7. Deploy to EC2
       # -----------------------------------
       - name: Deploy to EC2 and Trigger Pipeline
+
         uses: appleboy/ssh-action@v1.0.3
 
         with:
@@ -99,18 +114,20 @@ jobs:
             echo "Pulling latest GitHub code..."
             echo "==========================================="
 
-            git pull origin main
+            git pull origin main || true
 
             echo "==========================================="
             echo "Logging into Amazon ECR..."
             echo "==========================================="
 
             aws ecr get-login-password --region $REGION \
-            | docker login --username AWS --password-stdin \
+            | docker login \
+            --username AWS \
+            --password-stdin \
             $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
 
             echo "==========================================="
-            echo "Pulling latest Spark image..."
+            echo "Pulling latest Docker image..."
             echo "==========================================="
 
             docker pull $IMAGE
@@ -123,7 +140,14 @@ jobs:
             docker rm spark-delta-engine || true
 
             echo "==========================================="
-            echo "Starting updated Spark container..."
+            echo "Stopping old Streamlit container..."
+            echo "==========================================="
+
+            docker stop streamlit-dashboard || true
+            docker rm streamlit-dashboard || true
+
+            echo "==========================================="
+            echo "Starting Spark container..."
             echo "==========================================="
 
             docker run -d \
@@ -135,15 +159,33 @@ jobs:
               -v $(pwd)/configs:/app/configs \
               -v $(pwd)/logs:/app/logs \
               -v $(pwd)/tests:/app/tests \
+              -v $(pwd)/dashboard:/app/dashboard \
               -w /app \
               $IMAGE \
               tail -f /dev/null
 
             echo "==========================================="
-            echo "Waiting for Spark container..."
+            echo "Starting Streamlit container..."
             echo "==========================================="
 
-            sleep 20
+            docker run -d \
+              --name streamlit-dashboard \
+              --network host \
+              --env-file .env \
+              -v $(pwd)/dashboard:/app/dashboard \
+              -v $(pwd)/configs:/app/configs \
+              -v $(pwd)/logs:/app/logs \
+              -w /app \
+              $IMAGE \
+              streamlit run dashboard/app.py \
+              --server.port 8501 \
+              --server.address 0.0.0.0
+
+            echo "==========================================="
+            echo "Waiting for containers..."
+            echo "==========================================="
+
+            sleep 30
 
             echo "==========================================="
             echo "Checking running containers..."
@@ -157,6 +199,15 @@ jobs:
 
             docker exec airflow-webserver \
             airflow dags trigger digital_payments_pipeline
+
+            echo "==========================================="
+            echo "Cleaning unused Docker resources..."
+            echo "==========================================="
+
+            docker image prune -af || true
+            docker container prune -f || true
+            docker builder prune -af || true
+            docker volume prune -f || true
 
             echo "==========================================="
             echo "Deployment completed successfully"
