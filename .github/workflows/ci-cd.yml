@@ -32,7 +32,6 @@ jobs:
       # -----------------------------------
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
-
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -48,23 +47,18 @@ jobs:
       # 4. Build Docker Image
       # -----------------------------------
       - name: Build Docker Image
-
         run: |
-
           docker build \
             -t $ECR_REPOSITORY:$IMAGE_TAG \
-            -f docker/Dockerfile .
+            -f docker/Dockerfile \
+            .
 
       # -----------------------------------
-      # 5. Tag Docker Image
+      # 5. Tag Docker Image (FIXED)
       # -----------------------------------
       - name: Tag Docker Image
-
         run: |
-
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-          ECR_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+          ECR_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
 
           docker tag \
             $ECR_REPOSITORY:$IMAGE_TAG \
@@ -76,18 +70,14 @@ jobs:
       # 6. Push Image to ECR
       # -----------------------------------
       - name: Push Image to ECR
-
         run: |
-
           docker push $ECR_URI:$IMAGE_TAG
 
       # -----------------------------------
-      # 7. Deploy to EC2
+      # 7. Deploy to EC2 and Trigger Pipeline
       # -----------------------------------
       - name: Deploy to EC2 and Trigger Pipeline
-
         uses: appleboy/ssh-action@v1.0.3
-
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
@@ -105,43 +95,25 @@ jobs:
             IMAGE="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$IMAGE_TAG"
 
             echo "==========================================="
-            echo "Navigating to project directory..."
-            echo "==========================================="
-
-            cd ~/spark-cluster/digital-payments-platform
-
-            echo "==========================================="
-            echo "Pulling latest GitHub code..."
-            echo "==========================================="
-
-            git pull origin main || true
-
-            echo "==========================================="
-            echo "Logging into Amazon ECR..."
+            echo "Logging into ECR..."
             echo "==========================================="
 
             aws ecr get-login-password --region $REGION \
-            | docker login \
-              --username AWS \
-              --password-stdin \
-              $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+            | docker login --username AWS --password-stdin \
+            $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
 
             echo "==========================================="
-            echo "Pulling latest Docker image..."
+            echo "Pulling latest image..."
             echo "==========================================="
 
             docker pull $IMAGE
 
             echo "==========================================="
-            echo "Stopping old Spark container..."
+            echo "Stopping old containers..."
             echo "==========================================="
 
             docker stop spark-delta-engine || true
             docker rm spark-delta-engine || true
-
-            echo "==========================================="
-            echo "Stopping old Streamlit container..."
-            echo "==========================================="
 
             docker stop streamlit-dashboard || true
             docker rm streamlit-dashboard || true
@@ -161,13 +133,12 @@ jobs:
               -v $(pwd)/configs:/app/configs \
               -v $(pwd)/logs:/app/logs \
               -v $(pwd)/tests:/app/tests \
-              -v $(pwd)/dashboard:/app/dashboard \
               -w /app \
               $IMAGE \
               tail -f /dev/null
 
             echo "==========================================="
-            echo "Starting Streamlit container..."
+            echo "Starting Streamlit..."
             echo "==========================================="
 
             docker run -d \
@@ -189,10 +160,10 @@ jobs:
             echo "Waiting for containers..."
             echo "==========================================="
 
-            sleep 30
+            sleep 20
 
             echo "==========================================="
-            echo "Checking running containers..."
+            echo "Running containers check..."
             echo "==========================================="
 
             docker ps
@@ -202,16 +173,13 @@ jobs:
             echo "==========================================="
 
             docker exec airflow-webserver \
-              airflow dags trigger digital_payments_pipeline
+              airflow dags trigger digital_payments_pipeline || true
 
             echo "==========================================="
-            echo "Cleaning unused Docker resources..."
+            echo "Cleanup Docker..."
             echo "==========================================="
 
-            docker image prune -af || true
-            docker container prune -f || true
-            docker builder prune -af || true
-            docker volume prune -f || true
+            docker system prune -f || true
 
             echo "==========================================="
             echo "Deployment completed successfully"
