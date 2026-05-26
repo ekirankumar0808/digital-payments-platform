@@ -123,38 +123,28 @@ jobs:
             echo "==========================================="
 
             docker run -d \
-              --name spark-delta-engine \
-              --network host \
-              --env-file .env \
-              -e AWS_REGION=$REGION \
-              -e AWS_DEFAULT_REGION=$REGION \
-              -v $(pwd)/spark:/app/spark \
-              -v $(pwd)/datasets:/app/datasets \
-              -v $(pwd)/configs:/app/configs \
-              -v $(pwd)/logs:/app/logs \
-              -v $(pwd)/tests:/app/tests \
-              -w /app \
-              $IMAGE \
-              tail -f /dev/null
+            --name spark-delta-engine \
+            --network host \
+            -e ENV=dev \
+            -e AWS_REGION=$REGION \
+            -e AWS_DEFAULT_REGION=$REGION \
+            $IMAGE \
+            tail -f /dev/null
 
             echo "==========================================="
             echo "Starting Streamlit..."
             echo "==========================================="
 
             docker run -d \
-              --name streamlit-dashboard \
-              --network host \
-              --env-file .env \
-              -e AWS_REGION=$REGION \
-              -e AWS_DEFAULT_REGION=$REGION \
-              -v $(pwd)/dashboard:/app/dashboard \
-              -v $(pwd)/configs:/app/configs \
-              -v $(pwd)/logs:/app/logs \
-              -w /app \
-              $IMAGE \
-              streamlit run dashboard/app.py \
-              --server.port 8501 \
-              --server.address 0.0.0.0
+            --name streamlit-dashboard \
+            --network host \
+            -e ENV=dev \
+            -e AWS_REGION=$REGION \
+            -e AWS_DEFAULT_REGION=$REGION \
+            $IMAGE \
+            streamlit run dashboard/app.py \
+            --server.port 8501 \
+            --server.address 0.0.0.0
 
             echo "==========================================="
             echo "Waiting for containers..."
