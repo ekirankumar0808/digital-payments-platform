@@ -1,9 +1,12 @@
+```python
 import os
+import uuid
 from datetime import datetime
 
 from py4j.java_gateway import java_import
 from delta.tables import DeltaTable
 
+from pyspark import StorageLevel
 from pyspark.sql import Row
 from pyspark.sql.functions import (
     current_timestamp,
@@ -117,6 +120,7 @@ class BronzeIngestionJob:
     def get_new_files(self, csv_files):
 
         if len(csv_files) == 0:
+
             self.logger.warning("No CSV files found in raw layer")
             return []
 
@@ -128,6 +132,7 @@ class BronzeIngestionJob:
                 self.spark.read
                 .format("delta")
                 .load(self.metadata_path)
+                .filter("status = 'SUCCESS'")
                 .select("file_path")
                 .distinct()
             )
@@ -142,7 +147,10 @@ class BronzeIngestionJob:
 
         except Exception as e:
 
-            self.logger.warning(f"Metadata table missing. Initial load. Error: {str(e)}")
+            self.logger.warning(
+                f"Metadata table missing. Initial load. Error: {str(e)}"
+            )
+
             new_files_df = csv_df
 
         return [row.asDict() for row in new_files_df.collect()]
@@ -157,6 +165,8 @@ class BronzeIngestionJob:
             self.spark.read
             .format("csv")
             .option("header", "true")
+            .option("mode", "PERMISSIVE")
+            .option("columnNameOfCorruptRecord", "_corrupt_record")
             .schema(transaction_schema)
             .load(file_path)
         )
@@ -178,6 +188,7 @@ class BronzeIngestionJob:
             return datetime.strptime(date_part, "%Y%m%d").date()
 
         except Exception:
+
             raise Exception(
                 f"Invalid file naming format: {file_name}"
             )
@@ -189,7 +200,8 @@ class BronzeIngestionJob:
     def write_bronze(self, df):
 
         (
-            df.write
+            df.repartition(4)
+            .write
             .format("delta")
             .mode("append")
             .option("mergeSchema", "true")
@@ -217,7 +229,10 @@ class BronzeIngestionJob:
 
         if DeltaTable.isDeltaTable(self.spark, self.metadata_path):
 
-            delta_table = DeltaTable.forPath(self.spark, self.metadata_path)
+            delta_table = DeltaTable.forPath(
+                self.spark,
+                self.metadata_path
+            )
 
             (
                 delta_table.alias("target")
@@ -245,16 +260,52 @@ class BronzeIngestionJob:
 
     def process_file(self, file):
 
-        pipeline_run_id = str(datetime.now())
+        pipeline_run_id = str(uuid.uuid4())
 
-        self.logger.info(f"Processing file: {file['file_path']}")
+        self.logger.info(
+            f"[RUN_ID={pipeline_run_id}] "
+            f"Processing file: {file['file_path']}"
+        )
+
+        # ------------------------------------------
+        # METADATA STARTED
+        # ------------------------------------------
+
+        self.update_metadata(
+            file=file,
+            row_count=0,
+            status="STARTED",
+            pipeline_run_id=pipeline_run_id
+        )
+
+        # ------------------------------------------
+        # READ CSV
+        # ------------------------------------------
 
         df = self.read_csv(file["file_path"])
 
-        # CHECK EMPTY FILE
-        if df.rdd.isEmpty():
+        # ------------------------------------------
+        # PERSIST DATAFRAME
+        # ------------------------------------------
 
-            self.logger.warning(f"Empty file: {file['file_name']}")
+        df = df.persist(StorageLevel.MEMORY_AND_DISK)
+
+        # ------------------------------------------
+        # ROW COUNT
+        # ------------------------------------------
+
+        row_count = df.count()
+
+        # ------------------------------------------
+        # EMPTY FILE CHECK
+        # ------------------------------------------
+
+        if row_count == 0:
+
+            self.logger.warning(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Empty file detected: {file['file_name']}"
+            )
 
             write_audit_log(
                 spark=self.spark,
@@ -267,24 +318,38 @@ class BronzeIngestionJob:
                 error_message="Empty file"
             )
 
-            self.update_metadata(file, 0, "FAILED", pipeline_run_id)
+            self.update_metadata(
+                file=file,
+                row_count=0,
+                status="FAILED",
+                pipeline_run_id=pipeline_run_id
+            )
+
+            df.unpersist()
+
             return
 
-        row_count = df.count()
+        self.logger.info(
+            f"[RUN_ID={pipeline_run_id}] "
+            f"Row count: {row_count}"
+        )
 
-        self.logger.info(f"Row count: {row_count}")
+        # ------------------------------------------
+        # INGESTION DATE
+        # ------------------------------------------
 
-        # --------------------------------------------------
-        # INGESTION DATE FROM FILE NAME
-        # --------------------------------------------------
+        ingestion_date = self.extract_ingestion_date(
+            file["file_name"]
+        )
 
-        ingestion_date = self.extract_ingestion_date(file["file_name"])
+        self.logger.info(
+            f"[RUN_ID={pipeline_run_id}] "
+            f"Ingestion date: {ingestion_date}"
+        )
 
-        self.logger.info(f"Ingestion date: {ingestion_date}")
-
-        # --------------------------------------------------
+        # ------------------------------------------
         # TRANSFORMATIONS
-        # --------------------------------------------------
+        # ------------------------------------------
 
         df = (
             df.withColumn(
@@ -319,12 +384,52 @@ class BronzeIngestionJob:
             )
         )
 
+        # ------------------------------------------
         # WRITE BRONZE
-        self.write_bronze(df)
+        # ------------------------------------------
 
-        self.logger.info(f"Bronze write completed: {file['file_name']}")
+        try:
 
+            self.write_bronze(df)
+
+            self.logger.info(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Bronze write completed"
+            )
+
+        except Exception as e:
+
+            self.logger.error(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Bronze write failed: {str(e)}"
+            )
+
+            write_audit_log(
+                spark=self.spark,
+                audit_path=self.audit_path,
+                pipeline_name="digital_payments_pipeline",
+                layer="bronze",
+                run_id=pipeline_run_id,
+                status="FAILED",
+                records_processed=0,
+                error_message=str(e)
+            )
+
+            self.update_metadata(
+                file=file,
+                row_count=0,
+                status="FAILED",
+                pipeline_run_id=pipeline_run_id
+            )
+
+            df.unpersist()
+
+            raise e
+
+        # ------------------------------------------
         # AUDIT LOG
+        # ------------------------------------------
+
         write_audit_log(
             spark=self.spark,
             audit_path=self.audit_path,
@@ -335,8 +440,22 @@ class BronzeIngestionJob:
             records_processed=row_count
         )
 
-        # METADATA UPDATE
-        self.update_metadata(file, row_count, "SUCCESS", pipeline_run_id)
+        # ------------------------------------------
+        # METADATA SUCCESS
+        # ------------------------------------------
+
+        self.update_metadata(
+            file=file,
+            row_count=row_count,
+            status="SUCCESS",
+            pipeline_run_id=pipeline_run_id
+        )
+
+        # ------------------------------------------
+        # UNPERSIST
+        # ------------------------------------------
+
+        df.unpersist()
 
     # --------------------------------------------------
     # RUN PIPELINE
@@ -347,33 +466,41 @@ class BronzeIngestionJob:
         self.logger.info("Starting Bronze Ingestion")
 
         csv_files = self.get_raw_files()
+
         new_files = self.get_new_files(csv_files)
 
         if not new_files:
+
             self.logger.info("No new files found")
+
             return
+
+        self.logger.info(
+            f"New files identified: {len(new_files)}"
+        )
 
         for file in new_files:
 
             try:
+
                 self.process_file(file)
 
             except Exception as e:
 
-                self.logger.error(f"Failed file {file['file_name']}: {str(e)}")
+                self.logger.error(
+                    f"Failed file {file['file_name']}: {str(e)}"
+                )
 
                 write_audit_log(
                     spark=self.spark,
                     audit_path=self.audit_path,
                     pipeline_name="digital_payments_pipeline",
                     layer="bronze",
-                    run_id=str(datetime.now()),
+                    run_id=str(uuid.uuid4()),
                     status="FAILED",
                     records_processed=0,
                     error_message=str(e)
                 )
-
-                self.update_metadata(file, 0, "FAILED", str(datetime.now()))
 
         self.logger.info("Bronze Ingestion Completed")
 
@@ -382,7 +509,9 @@ class BronzeIngestionJob:
     # --------------------------------------------------
 
     def stop(self):
+
         self.logger.info("Stopping Spark")
+
         self.spark.stop()
 
 
@@ -395,9 +524,16 @@ if __name__ == "__main__":
     job = BronzeIngestionJob()
 
     try:
+
         job.run()
+
     except Exception as e:
+
         job.logger.error(f"Fatal error: {str(e)}")
+
         raise
+
     finally:
+
         job.stop()
+```

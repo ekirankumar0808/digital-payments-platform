@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from delta.tables import DeltaTable
 from pyspark import StorageLevel
@@ -35,8 +35,15 @@ class GoldAggregationJob:
         self.spark.sparkContext.setLogLevel("ERROR")
 
         # Delta optimizations
-        self.spark.conf.set("spark.databricks.delta.optimizeWrite.enabled", "true")
-        self.spark.conf.set("spark.databricks.delta.autoCompact.enabled", "true")
+        self.spark.conf.set(
+            "spark.databricks.delta.optimizeWrite.enabled",
+            "true"
+        )
+
+        self.spark.conf.set(
+            "spark.databricks.delta.autoCompact.enabled",
+            "true"
+        )
 
         self.logger = get_logger(
             logger_name="GoldAggregation",
@@ -111,53 +118,106 @@ class GoldAggregationJob:
             .agg(
 
                 count("*").alias("total_transactions"),
-                countDistinct("sender_id").alias("unique_senders"),
-                countDistinct("receiver_id").alias("unique_receivers"),
-                sum("isFraud").alias("total_frauds"),
-                sum("isFlaggedFraud").alias("total_flagged_frauds"),
 
-                when(
-                    count("*") > 0,
-                    sum("isFraud").cast("double") / count("*")
-                ).otherwise(0).alias("fraud_rate"),
+                countDistinct("sender_id").alias(
+                    "unique_senders"
+                ),
 
-                sum("amount").alias("total_transaction_value"),
+                countDistinct("receiver_id").alias(
+                    "unique_receivers"
+                ),
+
+                sum("isFraud").alias(
+                    "total_frauds"
+                ),
+
+                sum("isFlaggedFraud").alias(
+                    "total_flagged_frauds"
+                ),
+
+                (
+                    sum("isFraud").cast("double")
+                    / count("*")).alias("fraud_rate"
+                ),
+
+                sum("amount").alias(
+                    "total_transaction_value"
+                ),
 
                 sum(
-                    when(col("isFraud") == 1, col("amount")).otherwise(0)
-                ).alias("fraud_amount"),
+                    when(
+                        col("isFraud") == 1,
+                        col("amount")
+                    ).otherwise(0)
+                ).alias(
+                    "fraud_amount"
+                ),
 
                 avg(
-                    when(col("isFraud") == 1, col("amount")).otherwise(0)
-                ).alias("avg_fraud_amount"),
+                    when(
+                        col("isFraud") == 1,
+                        col("amount")
+                    ).otherwise(0)
+                ).alias(
+                    "avg_fraud_amount"
+                ),
+                ),
 
-                sum("is_high_value").alias("high_value_txns"),
-                sum("is_full_depletion").alias("full_depletion_events"),
+                sum("is_high_value").alias(
+                    "high_value_txns"
+                ),
+
+                sum("is_full_depletion").alias(
+                    "full_depletion_events"
+                ),
 
                 sum(
-                    when(col("transaction_type") == "CASH_OUT", 1).otherwise(0)
-                ).alias("cash_out_count"),
+                    when(
+                        col("transaction_type") == "CASH_OUT",
+                        1
+                    ).otherwise(0)
+                ).alias(
+                    "cash_out_count"
+                ),
 
                 sum(
-                    when(col("transaction_type") == "TRANSFER", 1).otherwise(0)
-                ).alias("transfer_count"),
+                    when(
+                        col("transaction_type") == "TRANSFER",
+                        1
+                    ).otherwise(0)
+                ).alias(
+                    "transfer_count"
+                ),
 
-                avg("risk_score").alias("avg_risk_score"),
-                max("risk_score").alias("max_risk_score")
+                avg("risk_score").alias(
+                    "avg_risk_score"
+                ),
+
+                spark_max("risk_score").alias(
+                    "max_risk_score"
+                )
             )
         )
 
         silver_df.unpersist()
 
-        gold_df = gold_df.withColumn(
-            "gold_processed_timestamp",
-            current_timestamp()
-        ).withColumn(
-            "fraud_ratio_percent",
-            col("fraud_rate") * 100
-        ).withColumn(
-            "year_month",
-            date_format(to_date(col("ingestion_date")), "yyyy_MM")
+        gold_df = (
+            gold_df
+            .withColumn(
+                "gold_processed_timestamp",
+                current_timestamp()
+            )
+            .withColumn(
+                "fraud_ratio_percent",
+                col("fraud_rate") * 100
+            )
+            .withColumn(
+                "year_month",
+                date_format(
+                    to_date(col("ingestion_date")),
+                    "yyyy_MM"
+                )
+            )
         )
 
         return gold_df
@@ -170,30 +230,45 @@ class GoldAggregationJob:
 
         gold_df = gold_df.repartition(4)
 
-        merge_condition = "target.ingestion_date = source.ingestion_date"
+        merge_condition = (
+            "target.ingestion_date = source.ingestion_date"
+        )
 
-        if DeltaTable.isDeltaTable(self.spark, self.gold_path):
+        if DeltaTable.isDeltaTable(
+            self.spark,
+            self.gold_path
+        ):
 
             self.logger.info("Merging into Gold table")
 
-            delta_table = DeltaTable.forPath(self.spark, self.gold_path)
+            delta_table = DeltaTable.forPath(
+                self.spark,
+                self.gold_path
+            )
 
-            delta_table.alias("target").merge(
-                gold_df.alias("source"),
-                merge_condition
-            ).whenMatchedUpdateAll(
-            ).whenNotMatchedInsertAll(
-            ).execute()
+            (
+                delta_table.alias("target")
+                .merge(
+                    gold_df.alias("source"),
+                    merge_condition
+                )
+                .whenMatchedUpdateAll()
+                .whenNotMatchedInsertAll()
+                .execute()
+            )
 
         else:
 
             self.logger.info("Creating Gold table")
 
-            gold_df.write.format("delta") \
-                .mode("overwrite") \
-                .partitionBy("year_month") \
-                .option("mergeSchema", "true") \
+            (
+                gold_df.write
+                .format("delta")
+                .mode("overwrite")
+                .partitionBy("year_month")
+                .option("mergeSchema", "true")
                 .save(self.gold_path)
+            )
 
     # ------------------------------------------------------
     # UPDATE WATERMARK
@@ -210,11 +285,53 @@ class GoldAggregationJob:
             ["last_processed_timestamp"]
         )
 
-        watermark_df.write.format("delta") \
-            .mode("overwrite") \
+        (
+            watermark_df.write
+            .format("delta")
+            .mode("overwrite")
             .save(self.gold_metadata_path)
+        )
 
-        self.logger.info(f"Updated Gold watermark: {latest_timestamp}")
+        self.logger.info(
+            f"Updated Gold watermark: {latest_timestamp}"
+        )
+
+    # ------------------------------------------------------
+    # VALIDATION METRICS
+    # ------------------------------------------------------
+
+    def write_validation_metrics(
+        self,
+        total_records,
+        aggregated_records,
+        pipeline_run_id
+    ):
+
+        metrics_df = self.spark.createDataFrame(
+            [(
+                pipeline_run_id,
+                total_records,
+                aggregated_records,
+                datetime.now()
+            )],
+            [
+                "pipeline_run_id",
+                "total_records",
+                "aggregated_records",
+                "created_timestamp"
+            ]
+        )
+
+        (
+            metrics_df.write
+            .format("delta")
+            .mode("append")
+            .save(self.validation_metrics_path)
+        )
+
+        self.logger.info(
+            "Validation metrics written successfully"
+        )
 
     # ------------------------------------------------------
     # MAIN EXECUTION
@@ -226,13 +343,17 @@ class GoldAggregationJob:
 
             pipeline_run_id = str(datetime.now())
 
-            self.logger.info("Starting Gold Aggregation")
+            self.logger.info(
+                "Starting Gold Aggregation"
+            )
 
             silver_df = self.get_incremental_silver_data()
 
             if silver_df.limit(1).count() == 0:
 
-                self.logger.info("No new Silver records found")
+                self.logger.info(
+                    "No new Silver records found"
+                )
 
                 write_audit_log(
                     spark=self.spark,
@@ -250,7 +371,9 @@ class GoldAggregationJob:
 
             total_records = silver_df.count()
 
-            gold_df = self.aggregate_metrics(silver_df)
+            gold_df = self.aggregate_metrics(
+                silver_df
+            )
 
             aggregated_records = gold_df.count()
 
@@ -274,13 +397,17 @@ class GoldAggregationJob:
                 records_processed=aggregated_records
             )
 
-            self.logger.info("Gold aggregation completed successfully")
+            self.logger.info(
+                "Gold aggregation completed successfully"
+            )
 
             self.spark.stop()
 
         except Exception as e:
 
-            self.logger.error(f"Error in Gold Layer: {str(e)}")
+            self.logger.error(
+                f"Error in Gold Layer: {str(e)}"
+            )
 
             write_audit_log(
                 spark=self.spark,
@@ -294,10 +421,12 @@ class GoldAggregationJob:
             )
 
             self.spark.stop()
+
             raise e
 
 
 if __name__ == "__main__":
 
     job = GoldAggregationJob()
+
     job.run()

@@ -1,8 +1,12 @@
+```python
 import os
+import uuid
 from functools import reduce
 from datetime import datetime
 
 from delta.tables import DeltaTable
+
+from pyspark import StorageLevel
 
 from pyspark.sql.functions import (
     col,
@@ -10,9 +14,7 @@ from pyspark.sql.functions import (
     current_timestamp,
     upper,
     when,
-    max as spark_max,
-    concat_ws,
-    sha2
+    max as spark_max
 )
 
 from spark.utils.config_loader import load_config
@@ -32,15 +34,33 @@ class SilverTransformationJob:
         self.spark = create_spark_session("SilverTransformation")
         self.spark.sparkContext.setLogLevel("ERROR")
 
-        # Delta optimizations
-        self.spark.conf.set("spark.databricks.delta.optimizeWrite.enabled", "true")
-        self.spark.conf.set("spark.databricks.delta.autoCompact.enabled", "true")
+        # ---------------------------------------------------------
+        # DELTA OPTIMIZATIONS
+        # ---------------------------------------------------------
+
+        self.spark.conf.set(
+            "spark.databricks.delta.optimizeWrite.enabled",
+            "true"
+        )
+
+        self.spark.conf.set(
+            "spark.databricks.delta.autoCompact.enabled",
+            "true"
+        )
+
+        # ---------------------------------------------------------
+        # LOGGER
+        # ---------------------------------------------------------
 
         self.logger = get_logger(
             logger_name="SilverTransformation",
             log_path=self.config['logging']['log_path'],
             log_level=self.config['logging']['log_level']
         )
+
+        # ---------------------------------------------------------
+        # PATHS
+        # ---------------------------------------------------------
 
         self.bronze_path = self.config['paths']['bronze']
         self.silver_path = self.config['paths']['silver']
@@ -76,16 +96,20 @@ class SilverTransformationJob:
                 spark_max("last_processed_timestamp")
             ).collect()[0][0]
 
-            self.logger.info(f"Last processed timestamp: {last_processed_timestamp}")
+            self.logger.info(
+                f"Last processed timestamp: "
+                f"{last_processed_timestamp}"
+            )
 
             incremental_df = bronze_df.filter(
-                col("ingestion_timestamp") > lit(last_processed_timestamp)
+                col("ingestion_timestamp") >= lit(last_processed_timestamp)
             )
 
         except Exception as e:
 
             self.logger.warning(
-                f"No watermark found. Full load triggered. Reason: {str(e)}"
+                f"No watermark found. "
+                f"Full load triggered. Reason: {str(e)}"
             )
 
             incremental_df = bronze_df
@@ -99,25 +123,52 @@ class SilverTransformationJob:
     def run_validations(self, bronze_df):
 
         invalid_amount_df = validate_positive_amount(bronze_df)
-        invalid_null_df = validate_null_transaction_id(bronze_df)
-        invalid_balance_df = validate_balance(bronze_df)
-        invalid_type_df = validate_transaction_type(bronze_df)
+
+        invalid_null_df = validate_null_transaction_id(
+            bronze_df
+        )
+
+        invalid_balance_df = validate_balance(
+            bronze_df
+        )
+
+        invalid_type_df = validate_transaction_type(
+            bronze_df
+        )
 
         bad_records_df = reduce(
-            lambda df1, df2: df1.unionByName(df2, allowMissingColumns=True),
-            [invalid_amount_df, invalid_null_df, invalid_balance_df, invalid_type_df]
+            lambda df1, df2: df1.unionByName(
+                df2,
+                allowMissingColumns=True
+            ),
+            [
+                invalid_amount_df,
+                invalid_null_df,
+                invalid_balance_df,
+                invalid_type_df
+            ]
         ).dropDuplicates(["transaction_id"])
 
         return bad_records_df
 
     # ---------------------------------------------------------
-    # QUARANTINE
+    # WRITE QUARANTINE
     # ---------------------------------------------------------
 
     def write_quarantine(self, bad_records_df):
 
+        if bad_records_df.limit(1).count() == 0:
+
+            self.logger.info(
+                "No invalid records found"
+            )
+
+            return
+
         (
-            bad_records_df.write
+            bad_records_df
+            .repartition(2)
+            .write
             .format("delta")
             .mode("append")
             .option("mergeSchema", "true")
@@ -128,7 +179,11 @@ class SilverTransformationJob:
     # REMOVE BAD RECORDS
     # ---------------------------------------------------------
 
-    def remove_bad_records(self, bronze_df, bad_records_df):
+    def remove_bad_records(
+        self,
+        bronze_df,
+        bad_records_df
+    ):
 
         return bronze_df.join(
             bad_records_df.select("transaction_id"),
@@ -143,94 +198,202 @@ class SilverTransformationJob:
     def transform_data(self, silver_base_df):
 
         silver_df = (
+
             silver_base_df
 
-            # KEEP Bronze transaction_id (DO NOT REGENERATE)
+            # -------------------------------------------------
+            # DEDUPLICATION
+            # -------------------------------------------------
+
             .dropDuplicates(["transaction_id"])
 
-            .withColumnRenamed("type", "transaction_type")
-            .withColumnRenamed("nameOrig", "sender_id")
-            .withColumnRenamed("nameDest", "receiver_id")
+            # -------------------------------------------------
+            # RENAME COLUMNS
+            # -------------------------------------------------
 
-            .withColumn("transaction_type", upper(col("transaction_type")))
+            .withColumnRenamed(
+                "type",
+                "transaction_type"
+            )
 
-            .withColumn("step", col("step").cast("int"))
-            .withColumn("amount", col("amount").cast("double"))
-            .withColumn("oldbalanceOrg", col("oldbalanceOrg").cast("double"))
-            .withColumn("newbalanceOrig", col("newbalanceOrig").cast("double"))
-            .withColumn("oldbalanceDest", col("oldbalanceDest").cast("double"))
-            .withColumn("newbalanceDest", col("newbalanceDest").cast("double"))
-            .withColumn("isFraud", col("isFraud").cast("int"))
-            .withColumn("isFlaggedFraud", col("isFlaggedFraud").cast("int"))
+            .withColumnRenamed(
+                "nameOrig",
+                "sender_id"
+            )
 
-            # SILVER LEVEL TIMESTAMP
-            .withColumn("silver_processing_timestamp", current_timestamp())
+            .withColumnRenamed(
+                "nameDest",
+                "receiver_id"
+            )
 
-            # FEATURES
+            # -------------------------------------------------
+            # STANDARDIZATION
+            # -------------------------------------------------
+
+            .withColumn(
+                "transaction_type",
+                upper(col("transaction_type"))
+            )
+
+            # -------------------------------------------------
+            # CASTING
+            # -------------------------------------------------
+
+            .withColumn(
+                "step",
+                col("step").cast("int")
+            )
+
+            .withColumn(
+                "amount",
+                col("amount").cast("double")
+            )
+
+            .withColumn(
+                "oldbalanceOrg",
+                col("oldbalanceOrg").cast("double")
+            )
+
+            .withColumn(
+                "newbalanceOrig",
+                col("newbalanceOrig").cast("double")
+            )
+
+            .withColumn(
+                "oldbalanceDest",
+                col("oldbalanceDest").cast("double")
+            )
+
+            .withColumn(
+                "newbalanceDest",
+                col("newbalanceDest").cast("double")
+            )
+
+            .withColumn(
+                "isFraud",
+                col("isFraud").cast("int")
+            )
+
+            .withColumn(
+                "isFlaggedFraud",
+                col("isFlaggedFraud").cast("int")
+            )
+
+            # -------------------------------------------------
+            # SILVER PROCESSING TIMESTAMP
+            # -------------------------------------------------
+
+            .withColumn(
+                "silver_processing_timestamp",
+                current_timestamp()
+            )
+
+            # -------------------------------------------------
+            # FEATURE ENGINEERING
+            # -------------------------------------------------
+
             .withColumn(
                 "sender_balance_diff",
-                col("oldbalanceOrg") - col("newbalanceOrig")
+                col("oldbalanceOrg")
+                - col("newbalanceOrig")
             )
+
             .withColumn(
                 "receiver_balance_diff",
-                col("newbalanceDest") - col("oldbalanceDest")
+                col("newbalanceDest")
+                - col("oldbalanceDest")
             )
+
             .withColumn(
                 "is_full_depletion",
-                when(col("newbalanceOrig") == 0, 1).otherwise(0)
+                when(
+                    col("newbalanceOrig") == 0,
+                    1
+                ).otherwise(0)
             )
+
             .withColumn(
                 "is_high_value",
-                when(col("amount") > 200000, 1).otherwise(0)
+                when(
+                    col("amount") > 200000,
+                    1
+                ).otherwise(0)
             )
+
             .withColumn(
                 "type_risk",
-                when(col("transaction_type") == "TRANSFER", 2)
-                .when(col("transaction_type") == "CASH_OUT", 2)
+                when(
+                    col("transaction_type")
+                    == "TRANSFER",
+                    2
+                )
+                .when(
+                    col("transaction_type")
+                    == "CASH_OUT",
+                    2
+                )
                 .otherwise(0)
             )
         )
 
+        # ---------------------------------------------------------
+        # RISK SCORE
+        # ---------------------------------------------------------
+
         silver_df = silver_df.withColumn(
             "risk_score",
-            col("isFraud") * 5 +
-            col("isFlaggedFraud") * 4 +
-            col("is_high_value") * 2 +
-            col("is_full_depletion") * 2 +
-            col("type_risk")
+            col("isFraud") * 5
+            + col("isFlaggedFraud") * 4
+            + col("is_high_value") * 2
+            + col("is_full_depletion") * 2
+            + col("type_risk")
         )
 
         return silver_df
 
     # ---------------------------------------------------------
-    # UPSERT
+    # UPSERT SILVER
     # ---------------------------------------------------------
 
     def upsert_silver(self, silver_df):
 
         silver_df = silver_df.repartition(4)
 
-        if DeltaTable.isDeltaTable(self.spark, self.silver_path):
+        if DeltaTable.isDeltaTable(
+            self.spark,
+            self.silver_path
+        ):
 
-            delta_table = DeltaTable.forPath(self.spark, self.silver_path)
+            delta_table = DeltaTable.forPath(
+                self.spark,
+                self.silver_path
+            )
 
-            delta_table.alias("target").merge(
-                silver_df.alias("source"),
-                "target.transaction_id = source.transaction_id"
-            ).whenMatchedUpdateAll(
-            ).whenNotMatchedInsertAll(
-            ).execute()
+            (
+                delta_table.alias("target")
+                .merge(
+                    silver_df.alias("source"),
+                    "target.transaction_id = "
+                    "source.transaction_id"
+                )
+                .whenMatchedUpdateAll()
+                .whenNotMatchedInsertAll()
+                .execute()
+            )
 
         else:
 
-            silver_df.write.format("delta") \
-                .mode("overwrite") \
-                .partitionBy("ingestion_date") \
-                .option("mergeSchema", "true") \
+            (
+                silver_df.write
+                .format("delta")
+                .mode("overwrite")
+                .partitionBy("ingestion_date")
+                .option("mergeSchema", "true")
                 .save(self.silver_path)
+            )
 
     # ---------------------------------------------------------
-    # WATERMARK UPDATE
+    # UPDATE WATERMARK
     # ---------------------------------------------------------
 
     def update_watermark(self, bronze_df):
@@ -244,8 +407,49 @@ class SilverTransformationJob:
             ["last_processed_timestamp"]
         )
 
-        watermark_df.write.format("delta").mode("overwrite").save(
-            self.silver_metadata_path
+        (
+            watermark_df.write
+            .format("delta")
+            .mode("overwrite")
+            .save(self.silver_metadata_path)
+        )
+
+    # ---------------------------------------------------------
+    # WRITE VALIDATION METRICS
+    # ---------------------------------------------------------
+
+    def write_validation_metrics(
+        self,
+        pipeline_run_id,
+        total_records,
+        valid_records,
+        invalid_records
+    ):
+
+        metrics_df = self.spark.createDataFrame(
+            [
+                (
+                    pipeline_run_id,
+                    total_records,
+                    valid_records,
+                    invalid_records,
+                    datetime.now()
+                )
+            ],
+            [
+                "pipeline_run_id",
+                "total_records",
+                "valid_records",
+                "invalid_records",
+                "created_timestamp"
+            ]
+        )
+
+        (
+            metrics_df.write
+            .format("delta")
+            .mode("append")
+            .save(self.validation_metrics_path)
         )
 
     # ---------------------------------------------------------
@@ -254,31 +458,120 @@ class SilverTransformationJob:
 
     def run(self):
 
+        pipeline_run_id = str(uuid.uuid4())
+
         try:
 
-            pipeline_run_id = str(datetime.now())
+            self.logger.info(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Silver transformation started"
+            )
 
-            bronze_df = self.get_incremental_bronze_data()
+            bronze_df = (
+                self.get_incremental_bronze_data()
+                .persist(StorageLevel.MEMORY_AND_DISK)
+            )
+
+            # -------------------------------------------------
+            # EMPTY CHECK
+            # -------------------------------------------------
 
             if bronze_df.limit(1).count() == 0:
-                self.logger.info("No records found")
+
+                self.logger.info(
+                    f"[RUN_ID={pipeline_run_id}] "
+                    f"No records found"
+                )
+
+                bronze_df.unpersist()
+
                 return
 
-            bad_records_df = self.run_validations(bronze_df)
+            # -------------------------------------------------
+            # VALIDATIONS
+            # -------------------------------------------------
+
+            bad_records_df = (
+                self.run_validations(bronze_df)
+                .persist(StorageLevel.MEMORY_AND_DISK)
+            )
+
+            # -------------------------------------------------
+            # METRICS
+            # -------------------------------------------------
 
             total_records = bronze_df.count()
+
             invalid_records = bad_records_df.count()
-            valid_records = total_records - invalid_records
+
+            valid_records = (
+                total_records - invalid_records
+            )
+
+            self.logger.info(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Total Records: {total_records}"
+            )
+
+            self.logger.info(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Valid Records: {valid_records}"
+            )
+
+            self.logger.info(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Invalid Records: {invalid_records}"
+            )
+
+            # -------------------------------------------------
+            # QUARANTINE
+            # -------------------------------------------------
 
             self.write_quarantine(bad_records_df)
 
-            silver_base_df = self.remove_bad_records(bronze_df, bad_records_df)
+            # -------------------------------------------------
+            # REMOVE BAD RECORDS
+            # -------------------------------------------------
 
-            silver_df = self.transform_data(silver_base_df)
+            silver_base_df = self.remove_bad_records(
+                bronze_df,
+                bad_records_df
+            )
+
+            # -------------------------------------------------
+            # TRANSFORM
+            # -------------------------------------------------
+
+            silver_df = self.transform_data(
+                silver_base_df
+            )
+
+            # -------------------------------------------------
+            # UPSERT SILVER
+            # -------------------------------------------------
 
             self.upsert_silver(silver_df)
 
+            # -------------------------------------------------
+            # WATERMARK
+            # -------------------------------------------------
+
             self.update_watermark(bronze_df)
+
+            # -------------------------------------------------
+            # VALIDATION METRICS
+            # -------------------------------------------------
+
+            self.write_validation_metrics(
+                pipeline_run_id=pipeline_run_id,
+                total_records=total_records,
+                valid_records=valid_records,
+                invalid_records=invalid_records
+            )
+
+            # -------------------------------------------------
+            # AUDIT LOG
+            # -------------------------------------------------
 
             write_audit_log(
                 spark=self.spark,
@@ -290,25 +583,42 @@ class SilverTransformationJob:
                 records_processed=valid_records
             )
 
-            self.spark.stop()
+            self.logger.info(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Silver transformation completed"
+            )
+
+            bronze_df.unpersist()
+            bad_records_df.unpersist()
 
         except Exception as e:
+
+            self.logger.error(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Silver transformation failed: {str(e)}"
+            )
 
             write_audit_log(
                 spark=self.spark,
                 audit_path=self.audit_path,
                 pipeline_name="digital_payments_pipeline",
                 layer="silver",
-                run_id=str(datetime.now()),
+                run_id=pipeline_run_id,
                 status="FAILED",
                 records_processed=0,
                 error_message=str(e)
             )
 
-            self.spark.stop()
             raise e
+
+        finally:
+
+            self.spark.stop()
 
 
 if __name__ == "__main__":
+
     job = SilverTransformationJob()
+
     job.run()
+```
