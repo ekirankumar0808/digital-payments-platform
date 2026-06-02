@@ -1,4 +1,3 @@
-```python
 import os
 import uuid
 from functools import reduce
@@ -621,4 +620,3 @@ if __name__ == "__main__":
     job = SilverTransformationJob()
 
     job.run()
-```

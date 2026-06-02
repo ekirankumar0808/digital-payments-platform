@@ -56,6 +56,7 @@ with DAG(
         task_id="bronze_ingestion",
         bash_command="""
         set -e
+        set -o pipefail
         echo "🚀 Starting Bronze Ingestion"
 
         docker exec spark-delta-engine spark-submit /app/spark/bronze/bronze_ingestion.py \
@@ -71,6 +72,7 @@ with DAG(
         task_id="silver_transformation",
         bash_command="""
         set -e
+        set -o pipefail
         echo "🚀 Starting Silver Transformation"
 
         docker exec spark-delta-engine spark-submit /app/spark/silver/silver_transformation.py \
@@ -86,6 +88,7 @@ with DAG(
         task_id="data_quality_check",
         bash_command="""
         set -e
+        set -o pipefail
         echo "🔍 Running Data Quality Check"
 
         docker exec spark-delta-engine spark-submit /app/spark/utils/dq_check.py \
@@ -101,6 +104,7 @@ with DAG(
         task_id="gold_aggregation",
         bash_command="""
         set -e
+        set -o pipefail
         echo "🚀 Starting Gold Aggregation"
 
         docker exec spark-delta-engine spark-submit /app/spark/gold/gold_aggregation.py \

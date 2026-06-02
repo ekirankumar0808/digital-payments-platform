@@ -1,4 +1,3 @@
-```python
 import os
 import uuid
 from datetime import datetime
@@ -536,4 +535,3 @@ if __name__ == "__main__":
     finally:
 
         job.stop()
-```
