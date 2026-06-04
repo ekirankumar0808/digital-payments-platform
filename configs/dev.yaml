@@ -13,10 +13,12 @@ paths:
     gold: "s3a://digital-payments-kiran/gold/paysim/fraud_daily_summary/"
 
     quarantine: "s3a://digital-payments-kiran/quarantine/paysim/transactions/"
-    dataquality: "s3a://digital-payments-kiran/dataquality/paysim/transactions/"
 
     audit_pipeline_runs: "s3a://digital-payments-kiran/audit/pipeline_runs/"
     validation_metrics: "s3a://digital-payments-kiran/audit/validation_metrics/"
+
+dq:
+    failure_threshold: 0.05
 
 tables:
     transactions:

@@ -14,6 +14,7 @@ from pyspark.sql.functions import (
     upper,
     when,
     max as spark_max
+    , concat_ws, collect_set
 )
 
 from spark.utils.config_loader import load_config
@@ -64,10 +65,14 @@ class SilverTransformationJob:
         self.bronze_path = self.config['paths']['bronze']
         self.silver_path = self.config['paths']['silver']
         self.quarantine_path = self.config['paths']['quarantine']
-        self.dq_path = self.config['paths']['dataquality']
         self.silver_metadata_path = self.config['paths']['silver_metadata']
         self.audit_path = self.config['paths']['audit_pipeline_runs']
         self.validation_metrics_path = self.config['paths']['validation_metrics']
+
+        self.spark.conf.set(
+            "spark.databricks.delta.schema.autoMerge.enabled",
+            "true"
+        )
 
     # ---------------------------------------------------------
     # READ INCREMENTAL BRONZE DATA
@@ -135,7 +140,7 @@ class SilverTransformationJob:
             bronze_df
         )
 
-        bad_records_df = reduce(
+        combined_invalid_df = reduce(
             lambda df1, df2: df1.unionByName(
                 df2,
                 allowMissingColumns=True
@@ -146,7 +151,22 @@ class SilverTransformationJob:
                 invalid_balance_df,
                 invalid_type_df
             ]
-        ).dropDuplicates(["transaction_id"])
+        )
+
+        bad_records_df = (
+            combined_invalid_df
+            .groupBy(
+                *[
+                    column_name
+                    for column_name in combined_invalid_df.columns
+                    if column_name != "validation_reason"
+                ]
+            )
+            .agg(
+                concat_ws(",", collect_set("validation_reason"))
+                .alias("validation_reason")
+            )
+        )
 
         return bad_records_df
 
@@ -423,6 +443,8 @@ class SilverTransformationJob:
         total_records,
         valid_records,
         invalid_records
+        ,
+        failure_rate
     ):
 
         metrics_df = self.spark.createDataFrame(
@@ -432,6 +454,9 @@ class SilverTransformationJob:
                     total_records,
                     valid_records,
                     invalid_records,
+                    failure_rate,
+                    None,
+                    "silver",
                     datetime.now()
                 )
             ],
@@ -440,6 +465,9 @@ class SilverTransformationJob:
                 "total_records",
                 "valid_records",
                 "invalid_records",
+                "failure_rate",
+                "aggregated_records",
+                "metric_type",
                 "created_timestamp"
             ]
         )
@@ -448,6 +476,7 @@ class SilverTransformationJob:
             metrics_df.write
             .format("delta")
             .mode("append")
+            .option("mergeSchema", "true")
             .save(self.validation_metrics_path)
         )
 
@@ -505,6 +534,15 @@ class SilverTransformationJob:
 
             valid_records = (
                 total_records - invalid_records
+            )
+
+            failure_rate = (
+                invalid_records / total_records
+            ) if total_records > 0 else 0.0
+
+            self.logger.info(
+                f"[RUN_ID={pipeline_run_id}] "
+                f"Failure Rate: {failure_rate:.6f}"
             )
 
             self.logger.info(
@@ -566,6 +604,7 @@ class SilverTransformationJob:
                 total_records=total_records,
                 valid_records=valid_records,
                 invalid_records=invalid_records
+                ,failure_rate=failure_rate
             )
 
             # -------------------------------------------------

@@ -161,7 +161,6 @@ class GoldAggregationJob:
                 ).alias(
                     "avg_fraud_amount"
                 ),
-                ),
 
                 sum("is_high_value").alias(
                     "high_value_txns"
@@ -311,13 +310,21 @@ class GoldAggregationJob:
             [(
                 pipeline_run_id,
                 total_records,
+                None,
+                None,
+                None,
                 aggregated_records,
+                "gold",
                 datetime.now()
             )],
             [
                 "pipeline_run_id",
                 "total_records",
+                "valid_records",
+                "invalid_records",
+                "failure_rate",
                 "aggregated_records",
+                "metric_type",
                 "created_timestamp"
             ]
         )
@@ -326,6 +333,7 @@ class GoldAggregationJob:
             metrics_df.write
             .format("delta")
             .mode("append")
+            .option("mergeSchema", "true")
             .save(self.validation_metrics_path)
         )
 

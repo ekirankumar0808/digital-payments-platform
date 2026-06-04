@@ -34,6 +34,11 @@ def validate_null_transaction_id(df):
         col("nameDest").isNull()
     )
 
+    invalid_df = invalid_df.withColumn(
+        "validation_reason",
+        lit("MISSING_REQUIRED_FIELDS")
+    )
+
     return invalid_df
 
 
