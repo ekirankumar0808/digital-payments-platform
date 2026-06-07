@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from delta.tables import DeltaTable
 from pyspark import StorageLevel
+from pyspark.sql.types import StructType, StructField, StringType, LongType, DoubleType, TimestampType
 
 from pyspark.sql.functions import (
     col,
@@ -306,6 +307,17 @@ class GoldAggregationJob:
         pipeline_run_id
     ):
 
+        metrics_schema = StructType([
+            StructField("pipeline_run_id", StringType(), False),
+            StructField("total_records", LongType(), False),
+            StructField("valid_records", LongType(), True),
+            StructField("invalid_records", LongType(), True),
+            StructField("failure_rate", DoubleType(), True),
+            StructField("aggregated_records", LongType(), True),
+            StructField("metric_type", StringType(), False),
+            StructField("created_timestamp", TimestampType(), False)
+        ])
+
         metrics_df = self.spark.createDataFrame(
             [(
                 pipeline_run_id,
@@ -317,16 +329,7 @@ class GoldAggregationJob:
                 "gold",
                 datetime.now()
             )],
-            [
-                "pipeline_run_id",
-                "total_records",
-                "valid_records",
-                "invalid_records",
-                "failure_rate",
-                "aggregated_records",
-                "metric_type",
-                "created_timestamp"
-            ]
+            schema=metrics_schema
         )
 
         (

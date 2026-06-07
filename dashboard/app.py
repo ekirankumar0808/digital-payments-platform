@@ -58,7 +58,6 @@ SELECT
     CAST(gold_processed_timestamp AS timestamp) AS gold_processed_timestamp
 FROM gold_fraud_daily_summary
 ORDER BY ingestion_date DESC
-LIMIT 100
 """
 
 # ---------------------------------------------------

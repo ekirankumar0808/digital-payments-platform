@@ -20,6 +20,10 @@ paths:
 dq:
     failure_threshold: 0.05
 
+athena:
+    database: "digital_payments_analytics"
+    output: "s3://digital-payments-kiran/athena_results/"
+
 tables:
     transactions:
         name: transactions
