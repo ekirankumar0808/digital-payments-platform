@@ -13,7 +13,7 @@ def run_query(config, query):
         sql=query,
         database=config["athena"]["database"],
         boto3_session=session,
-        s3_output=config["athena"]["output_location"]
+        s3_output=config["athena"]["output_location"],
         ctas_approach=False
 
     )

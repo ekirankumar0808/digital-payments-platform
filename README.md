@@ -2,194 +2,435 @@
 
 ## Project Overview
 
-This project is a production-grade AWS Data Engineering platform built using Medallion Architecture (Bronze, Silver, Gold) for processing and analyzing digital payment fraud transactions.
+This repository implements a production-grade Delta Lakehouse pipeline for digital payments fraud analytics. The solution ingests PaySim-style transaction CSVs from AWS S3, processes them through Bronze, Silver, and Gold layers using PySpark and Delta Lake, orchestrates execution with Apache Airflow, validates data quality, and exposes business metrics through AWS Athena and a Streamlit dashboard.
 
-The pipeline ingests raw transaction data into AWS S3, processes it using PySpark and Delta Lake, orchestrates workflows using Apache Airflow, performs data quality validation, and exposes analytics through Athena and Streamlit dashboards.
+## Business Problem
 
----
+Financial operations teams need a robust pipeline that can:
 
-# Architecture
+- ingest large volumes of transaction data from S3,
+- enforce data quality and auditability,
+- enrich and deduplicate transaction records,
+- compute daily fraud and risk analytics,
+- and serve analytics to business users via Athena and dashboarding.
 
-Raw CSV → S3 Raw Layer → Spark Bronze → Spark Silver → Spark Gold → Athena → Streamlit Dashboard
+This project addresses fraud monitoring and pipeline reliability for digital payment transactions.
 
----
+## Solution Architecture
 
-# Tech Stack
+[IMAGE_PLACEHOLDER_ARCHITECTURE]
 
-- AWS S3
-- AWS Athena
-- Apache Spark
-- PySpark
-- Delta Lake
-- Apache Airflow
-- Docker
-- Streamlit
-- Pandas
-- Plotly
-- Python
+```mermaid
+graph LR
+    A[Raw CSV in S3] -->|Bronze Ingestion| B[Bronze Delta Lake]
+    B -->|Silver Transformation| C[Silver Delta Lake]
+    C -->|Gold Aggregation| D[Gold Delta Lake]
+    D -->|Athena Query| E[Athena / Analytics]
+    E -->|Dashboard| F[Streamlit]
+    G[Airflow DAG] --> B
+    G --> C
+    G --> H[Data Quality Check]
+    H --> D
+    G --> D
+    subgraph Docker
+      I[Spark Container]
+      J[Streamlit Container]
+      K[Airflow Containers]
+    end
+    G --- I
+    F --- J
+```
 
----
+## Technology Stack
 
-# Key Features
+| Technology | Purpose |
+|---|---|
+| Python | ETL orchestration and utility code |
+| PySpark | Spark job development |
+| Apache Spark | Distributed processing engine |
+| Delta Lake | Transactional lakehouse storage |
+| Apache Airflow | Workflow orchestration |
+| Docker | Containerized runtime |
+| AWS S3 | Raw and Delta storage layer |
+| AWS Athena | SQL analytics over Gold layer |
+| PostgreSQL | Airflow metadata database |
+| Streamlit | Analytics dashboard UI |
+| awswrangler | Athena query integration |
+| boto3 | AWS SDK for Python |
+| PyYAML | Configuration loading |
+| pytest / chispa | Unit testing |
 
-- Incremental ETL Processing
-- Delta Lake MERGE Operations
-- Medallion Architecture
-- Data Quality Validation
-- Quarantine Layer
-- Audit Logging
-- Athena Analytics
-- Interactive Dashboard
-- Dockerized Infrastructure
-- Airflow Orchestration
+## Project Architecture
 
----
+[IMAGE_PLACEHOLDER_DATA_FLOW]
 
-# Project Structure
+The architecture follows a medallion design:
 
-```bash
-digital-payments-platform/
-│
+- Raw CSV files land in S3.
+- A Bronze Spark job ingests and stores raw records in Delta format.
+- A Silver Spark job validates, quarantines, enriches, and upserts clean records.
+- A Gold Spark job aggregates daily fraud metrics.
+- Airflow orchestrates the pipeline and handles retries.
+- Athena and Streamlit visualize the Gold layer results.
+
+## Repository Structure
+![Project Repository](screenshots/project_structure.png)
+```text
+.digital-payments-platform/
+├── .github/
+│   └── workflows/ci-cd.yml
 ├── airflow/
-├── spark/
-│   ├── bronze/
-│   ├── silver/
-│   ├── gold/
-│   └── utils/
-│
-├── dashboard/
-├── sql/
+│   ├── docker-compose.yml
+│   └── dags/payment_pipeline_dag.py
+├── analytics/
+│   └── table_reference.md
 ├── configs/
-├── screenshots/
+│   └── dev.yaml
+├── dashboard/
+│   ├── app.py
+│   ├── requirements.txt
+│   └── utils/athena_client.py
 ├── docker/
+│   └── Dockerfile
+├── spark/
+│   ├── bronze/bronze_ingestion.py
+│   ├── silver/silver_transformation.py
+│   ├── gold/gold_aggregation.py
+│   ├── schemas/transaction_schema.py
+│   ├── schemas/metadata_schema.py
+│   └── utils/
+│       ├── audit_logger.py
+│       ├── config_loader.py
+│       ├── dq_check.py
+│       ├── logger.py
+│       ├── spark_session.py
+│       └── validators.py
 ├── tests/
-│
+│   ├── conftest.py
+│   └── test_validators.py
 ├── docker-compose.yml
 ├── requirements.txt
 └── README.md
 ```
 
----
+## Data Pipeline Overview
 
-# Pipeline Layers
+### Data Ingestion
 
-## Bronze Layer
+- `spark/bronze/bronze_ingestion.py` scans `s3a://digital-payments-kiran/raw/paysim/transactions/`.
+- It uses Hadoop S3A and a strict schema from `spark/schemas/transaction_schema.py`.
+- New files are detected by comparing against a Bronze metadata Delta table.
+- Each record receives `transaction_id`, `ingestion_timestamp`, `processing_timestamp`, `source_file`, and `ingestion_date`.
 
-- Raw ingestion from S3
-- Schema enforcement
-- Metadata generation
-- Audit logging
+### Bronze Layer
 
-## Silver Layer
+- Writes raw records to Delta Lake at `s3a://digital-payments-kiran/bronze/paysim/transactions/`.
+- Uses `partitionBy("ingestion_date")` for partition pruning.
+- Maintains a Delta metadata tracker at `s3a://digital-payments-kiran/metadata/bronze_file_tracker/`.
+- Writes audit events to `s3a://digital-payments-kiran/audit/pipeline_runs/`.
 
-- Data cleansing
-- Validation framework
-- Fraud enrichment
-- Feature engineering
-- Quarantine handling
+### Silver Layer
 
-## Gold Layer
+- `spark/silver/silver_transformation.py` reads the Bronze Delta table.
+- It uses a watermark from `s3a://digital-payments-kiran/metadata/silver_file_tracker/` to process incremental updates.
+- Validation rules identify bad records and append them to a quarantine Delta path.
+- Clean records are transformed, deduplicated, and upserted into `s3a://digital-payments-kiran/silver/paysim/transactions/`.
 
-- Aggregated fraud analytics
-- KPI metrics
-- Business reporting
+### Gold Layer
 
----
+- `spark/gold/gold_aggregation.py` reads Silver Delta data incrementally using a Gold watermark.
+- Aggregates daily fraud metrics by `ingestion_date`.
+- Writes results to `s3a://digital-payments-kiran/gold/paysim/fraud_daily_summary/`.
+- The Gold table is partitioned by `year_month` for analytics efficiency.
 
-# Data Quality Framework
+## Transformation Logic
 
-The pipeline validates:
+Silver layer transformations include:
 
-- Invalid transaction amounts
-- Null transaction IDs
-- Invalid balances
-- Invalid transaction types
+- `type` → `transaction_type`
+- `nameOrig` → `sender_id`
+- `nameDest` → `receiver_id`
+- Numeric casting for `step`, `amount`, balances, and fraud flags
+- Upper-casing of `transaction_type`
+- Feature engineering:
+  - `sender_balance_diff`
+  - `receiver_balance_diff`
+  - `is_full_depletion`
+  - `is_high_value` (amount > 200000)
+  - `type_risk` for `TRANSFER` and `CASH_OUT`
+  - `risk_score`
+- Duplicate removal by `transaction_id`
 
-Bad records are stored separately in quarantine tables.
+Gold layer aggregations include:
 
----
+- total transactions
+- unique senders and receivers
+- total frauds and flagged frauds
+- fraud rate and fraud ratio percent
+- total transaction value
+- fraud amount and average fraud amount
+- high value transaction count
+- cash out and transfer counts
+- average and maximum risk score
 
-# Athena Analytics
+## Delta Lake Implementation
 
-Athena is used for:
+### ACID Transactions
 
-- Fraud trend analysis
-- KPI reporting
-- Business intelligence queries
+- All storage layers use Delta Lake for transactional writes.
+- Spark jobs use `format("delta")` and Delta APIs for reads/writes.
 
----
+### Upserts / MERGE Operations
 
-# Streamlit Dashboard
+- Bronze metadata updates use `DeltaTable.merge` to maintain file status.
+- Silver layer performs upserts using a Delta merge on `transaction_id`.
+- Gold layer merges by `ingestion_date` to update daily metrics.
 
-The dashboard provides:
+### Partitioning Strategy
 
-- Fraud KPIs
-- Transaction trends
-- Fraud amount analytics
-- Risk score monitoring
-- Interactive visualizations
+- Bronze: `partitionBy("ingestion_date")`
+- Silver: initially partitioned by `ingestion_date` on first write
+- Gold: partitioned by `year_month` for time-series query performance
 
----
+### Schema Evolution Handling
 
-# Airflow Orchestration
+- `mergeSchema=true` is used for Delta writes.
+- Spark config enables `spark.databricks.delta.schema.autoMerge.enabled=true`.
+- This allows incremental schema changes during writes.
 
-Airflow DAG automates:
+## Airflow Orchestration
 
-- Bronze ingestion
-- Silver transformation
-- Gold aggregation
+### DAG Design
+- DAG ID: `digital_payments_pipeline`
+- Schedule: `@daily`
+- Start date: `2024-01-01`
+- Catchup: `False`
+- Max active runs: `1`
+- Concurrency: `4`
+- Dag run timeout: `2h`
 
----
+### Task Dependencies
 
-# Delta Lake Features
+```text
+bronze_ingestion >> silver_transformation >> data_quality_check >> gold_aggregation
+```
 
-- ACID Transactions
-- MERGE Operations
-- Incremental Processing
-- Schema Evolution
+### Task Implementation
+{}
+- `Bronze Ingestion`: Spark submit `spark/bronze/bronze_ingestion.py`
+- `Silver Transformation`: Spark submit `spark/silver/silver_transformation.py`
+- `Data Quality Check`: Spark submit `spark/utils/dq_check.py`
+- `Gold Aggregation`: Spark submit `spark/gold/gold_aggregation.py`
 
----
+All tasks run inside the Docker Spark container via `docker exec spark-delta-engine`.
 
-# How to Run
+### Scheduling & Retry Strategy
 
-## Start Docker Services
+- Each task retries up to `3` times.
+- Retry delay: `5` minutes.
+- Email notifications enabled on failure.
+- Success/failure callbacks log task state.
+
+![Airflow Dag](screenshots/airflow_dag.png)
+
+## Data Quality Framework
+
+### Validation Checks
+
+Implemented in `spark/utils/validators.py`:
+
+- `validate_positive_amount` (amount <= 0)
+- `validate_null_transaction_id` (missing `step`, `nameOrig`, or `nameDest`)
+- `validate_balance` (negative or invalid balances)
+- `validate_transaction_type` (only allowed PaySim transaction types)
+
+### Null Checks
+
+- Ensures required business keys are present instead of raw transaction IDs.
+
+### Duplicate Checks
+
+- Removes duplicates in Silver using `dropDuplicates(["transaction_id"])`.
+
+### Business Rule Validations
+
+- Invalid transaction types are quarantined.
+- Negative balances and zero/negative amounts are quarantined.
+- Bad records are written to a Delta quarantine path.
+
+### DQ Enforcement
+
+- `spark/utils/dq_check.py` evaluates the latest Silver validation metrics.
+- The configured failure threshold is `0.05`.
+- If `failure_rate` exceeds the threshold, the task fails.
+
+## AWS Architecture
+
+### S3 Bucket Structure
+
+Configured in `configs/dev.yaml` and documented in `analytics/table_reference.md`:
+
+- Raw: `s3a://digital-payments-kiran/raw/paysim/transactions/`
+- Bronze: `s3a://digital-payments-kiran/bronze/paysim/transactions/`
+- Silver: `s3a://digital-payments-kiran/silver/paysim/transactions/`
+- Gold: `s3a://digital-payments-kiran/gold/paysim/fraud_daily_summary/`
+- Quarantine: `s3a://digital-payments-kiran/quarantine/paysim/transactions/`
+- Audit logs: `s3a://digital-payments-kiran/audit/pipeline_runs/`
+- Validation metrics: `s3a://digital-payments-kiran/audit/validation_metrics/`
+- Athena output: `s3://digital-payments-kiran/athena_results/`
+
+### Athena Integration
+
+- Dashboard queries Athena using `awswrangler`.
+- Athena database name: `digital_payments_analytics`.
+- Gold table referenced: `gold_fraud_daily_summary`.
+
+### Glue Integration
+
+- AWS Glue is not explicitly implemented in this repository.
+- Athena integration relies on a configured database name and S3 location.
+
+### IAM Considerations
+
+The repository assumes AWS credentials are supplied via environment variables. Access requirements include:
+
+- S3 read/write to raw, bronze, silver, gold, quarantine, audit, and Athena output locations
+- Athena query execution privileges
+- ECR push/pull and EC2 deployment privileges in CI/CD
+
+[IMAGE_PLACEHOLDER_AWS_SERVICES]
+
+## How to Run Locally
+
+### Prerequisites
+
+- Docker
+- Docker Compose
+- AWS credentials set in `.env`
+- Python dependencies installed inside image via `docker/Dockerfile`
+
+### Local Startup
+
+1. Copy or populate `.env` with:
+
+```bash
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=...
+```
+
+2. Start Spark and dashboard containers:
 
 ```bash
 docker compose up -d
 ```
 
-## Run Airflow DAG
+3. Start Airflow services:
 
 ```bash
-airflow dags trigger digital_payments_pipeline
+docker compose -f airflow/docker-compose.yml up -d
 ```
 
-## Start Streamlit Dashboard
+4. Access services:
+
+- Airflow UI: `http://localhost:8080`
+- Streamlit dashboard: `http://localhost:8501`
+
+## Environment Variables
+
+Required environment variables:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+- `ENV` (optional, defaults to `dev`)
+
+Additional Airflow runtime variables are configured in `airflow/docker-compose.yml`.
+
+## Running the Pipeline
+
+### Docker Startup
 
 ```bash
-streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+docker compose up -d
 ```
 
----
+### Airflow Startup
 
-# Future Improvements
+```bash
+docker compose -f airflow/docker-compose.yml up -d
+```
 
-- Real-time Kafka Streaming
-- ML Fraud Detection Models
-- EMR Deployment
-- Terraform IaC
-- CI/CD Automation
-- CloudWatch Monitoring
+### Trigger DAG
 
----
+```bash
+docker exec airflow-webserver airflow dags trigger digital_payments_pipeline
+```
 
-# Dashboard Preview
+### Manual Spark Execution
 
+```bash
+docker exec spark-delta-engine spark-submit /app/spark/bronze/bronze_ingestion.py
+```
 
+### Monitoring Execution
 
+- Check Airflow DAG runs in the Airflow UI.
+- Inspect Spark logs under `/app/logs` in the container.
+- Review Delta audit logs in S3 audit paths.
 
----
+## Sample Outputs
 
-# Author
+[IMAGE_PLACEHOLDER_BRONZE_OUTPUT]
 
-Kiran
+[IMAGE_PLACEHOLDER_SILVER_OUTPUT]
+
+[IMAGE_PLACEHOLDER_GOLD_OUTPUT]
+
+[IMAGE_PLACEHOLDER_ATHENA_RESULTS]
+
+## Performance Optimizations
+
+- `spark.sql.shuffle.partitions=4`
+- `repartition(4)` before Delta writes and aggregations
+- `StorageLevel.MEMORY_AND_DISK` caching in Bronze, Silver, and Gold jobs
+- Delta optimized writes enabled
+- Delta auto compact enabled
+- Partitioning by `ingestion_date` and `year_month`
+- Streaming dashboard caching with `st.cache_data(ttl=60)`
+
+## Monitoring and Logging
+
+- Custom Python logger writes to `/app/logs`.
+- Audit events are written as Delta tables for pipeline runs.
+- Airflow uses email alerts and callback logging.
+- Streamlit dashboard auto-refreshes every 60 seconds.
+
+## Future Enhancements
+
+- Add Glue catalog and table provisioning scripts
+- Implement Athena table creation or Glue crawler automation
+- Introduce Kafka or Kinesis streaming ingestion
+- Add ML-based fraud scoring and anomaly detection
+- Extend CI/CD with test gating and infrastructure-as-code
+- Add CloudWatch / Prometheus monitoring
+
+## Key Learnings
+
+- End-to-end Delta Lakehouse orchestration with Spark and Airflow
+- Incremental ETL with watermarking and upsert merge patterns
+- Data quality enforcement in Silver and dedicated DQ checks
+- Containerized deployment for Spark, Airflow, and dashboard services
+- Athena analytics integration with Streamlit visualization
+- Audit and metadata logging for operational observability
+
+## Resume Highlights
+
+- Built an end-to-end Delta Lakehouse pipeline for digital payments fraud analytics using PySpark and Delta Lake.
+- Implemented Bronze/Silver/Gold medallion architecture with incremental ingestion, data validation, and aggregation.
+- Developed a production Airflow DAG with retry and failure notification logic for orchestrating Spark jobs.
+- Created a Delta-based quarantine layer and validation metrics store for data quality enforcement.
+- Integrated AWS Athena analytics and Streamlit dashboarding for business KPI delivery.
+- Dockerized Spark and dashboard runtimes and enabled S3A access for AWS data lake storage.
+- Added GitHub Actions CI/CD to build Docker images, push to ECR, deploy to EC2, and trigger pipeline execution.
+- Wrote unit tests for Spark validation logic using PySpark, pytest, and chispa.
