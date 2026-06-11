@@ -408,12 +408,13 @@ docker exec spark-delta-engine spark-submit /app/spark/bronze/bronze_ingestion.p
 
 ## Future Enhancements
 
-- Add Glue catalog and table provisioning scripts
-- Implement Athena table creation or Glue crawler automation
-- Introduce Kafka or Kinesis streaming ingestion
-- Add ML-based fraud scoring and anomaly detection
-- Extend CI/CD with test gating and infrastructure-as-code
-- Add CloudWatch / Prometheus monitoring
+ - **Real-Time Data Processing:** Extend the batch pipeline to support real-time payment transaction ingestion using Apache Kafka and Spark Structured Streaming.
+
+- **Migration to Amazon EMR:** Upgrade the Spark processing layer to Amazon EMR for improved scalability, performance optimization, and managed cluster operations.
+
+- **Infrastructure as Code (IaC):** Implement Terraform to automate the provisioning and management of AWS infrastructure resources.
+
+- **Business Intelligence Dashboarding:** Develop interactive dashboards using Amazon QuickSight to visualize transaction trends, operational metrics, and key business KPIs.
 
 ## Key Learnings
 
@@ -424,7 +425,7 @@ docker exec spark-delta-engine spark-submit /app/spark/bronze/bronze_ingestion.p
 - Athena analytics integration with Streamlit visualization
 - Audit and metadata logging for operational observability
 
-## Resume Highlights
+## Highlights
 
 - Built an end-to-end Delta Lakehouse pipeline for digital payments fraud analytics using PySpark and Delta Lake.
 - Implemented Bronze/Silver/Gold medallion architecture with incremental ingestion, data validation, and aggregation.
