@@ -17,9 +17,6 @@ Financial operations teams need a robust pipeline that can:
 This project addresses fraud monitoring and pipeline reliability for digital payment transactions.
 
 ## Solution Architecture
-
-[IMAGE_PLACEHOLDER_ARCHITECTURE]
-
 ```mermaid
 graph LR
     A[Raw CSV in S3] -->|Bronze Ingestion| B[Bronze Delta Lake]
